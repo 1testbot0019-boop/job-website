@@ -1,34 +1,9 @@
-"""
-FreeJobAlert.com collector - Uttarakhand government jobs section.
-
-Why this exists: the official UKPSC/UKSSSC/Police sites block requests
-from GitHub Actions' cloud IP ranges (confirmed - they load fine from a
-normal Indian home connection, but time out from GitHub's servers every
-time). FreeJobAlert is a long-running, ordinary content site that already
-aggregates these same official notices into clean tables, updates daily
-(often within hours of the source), and isn't a locked-down government
-portal - it doesn't need the same "run from an Indian IP" workaround.
-
-Page structure (as fetched): the Uttarakhand page has several distinct
-<table> sections, each preceded by a heading:
-    "Latest Government Jobs in Uttarakhand"   -> job postings
-    "Uttarakhand Govt Jobs Result 2026"       -> results
-    "Uttarakhand Govt Jobs Admit Card 2026"   -> admit cards
-    "Uttarakhand Govt Jobs Answer Key 2026"   -> answer keys
-    "Uttarakhand Govt Jobs Cut Off 2026"      -> cutoffs (filed as RESULT)
-
-Further down the page there are sitewide "Top Govt Jobs" / "ADMIT CARDS" /
-"RESULTS" widgets that are NOT specific to Uttarakhand (they mix in jobs
-from other states) - those are deliberately skipped by only processing
-tables whose heading contains "uttarakhand".
-
-Since I can't fetch this page's exact live HTML tag/class names from this
-environment, table position + heading text is used to categorize rows
-instead of guessed CSS classes - the same "don't rely on invisible
-selectors" approach as extract.py.
-"""
+"""FreeJobAlert discovery collector with automatic official-link extraction."""
 
 import re
+import time
+from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
 
 from db import save_update
@@ -39,9 +14,13 @@ DEPARTMENT_HINTS = {
     "ukpsc": "UKPSC",
     "uksssc": "UKSSSC",
     "police": "Uttarakhand Police",
+    "iit roorkee": "IIT Roorkee",
+    "nit uttarakhand": "NIT Uttarakhand",
+    "powergrid": "POWERGRID",
 }
 
 LISTING_URL = "https://www.freejobalert.com/uttarakhand-government-jobs/"
+FREEJOBALERT_HOSTS = {"freejobalert.com", "www.freejobalert.com"}
 
 HEADERS = {
     "User-Agent": (
@@ -63,14 +42,8 @@ DATE_CELL_PATTERN = re.compile(r"\d{1,2}\s+\w{3,9}\s+\d{4}")
 
 
 def heading_for_table(table_tag):
-    """Walk backwards through previous siblings/elements to find the nearest heading."""
-    node = table_tag
-    for _ in range(30):  # safety limit
-        node = node.find_previous(["h1", "h2", "h3", "h4"])
-        if node is None:
-            return ""
-        return node.get_text(strip=True)
-    return ""
+    heading = table_tag.find_previous(["h1", "h2", "h3", "h4"])
+    return heading.get_text(strip=True) if heading else ""
 
 
 def category_from_heading(heading: str):
@@ -88,6 +61,91 @@ def guess_department(title: str) -> str:
     return "Uttarakhand Govt"
 
 
+def is_external_candidate(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.netloc.lower().split(":")[0]
+    if host in FREEJOBALERT_HOSTS or host.endswith(".freejobalert.com"):
+        return False
+    blocked = ("facebook.com", "twitter.com", "x.com", "youtube.com", "instagram.com", "telegram.me", "whatsapp.com")
+    return not any(domain in host for domain in blocked)
+
+
+def score_official_link(url: str, text: str) -> int:
+    """Prefer government/official notification links over ordinary external links."""
+    host = urlparse(url).netloc.lower()
+    blob = f"{text} {url}".lower()
+    score = 0
+
+    if host.endswith(".gov.in") or ".gov.in" in host:
+        score += 100
+    if host.endswith(".nic.in") or ".nic.in" in host:
+        score += 90
+    if host.endswith(".ac.in") or ".ac.in" in host:
+        score += 60
+    if any(word in host for word in ("ukpsc", "uksssc", "iit", "nit", "powergrid")):
+        score += 45
+    if "official notification" in blob or "official advertisement" in blob:
+        score += 80
+    if "official website" in blob or "official link" in blob:
+        score += 60
+    if "notification" in blob or "advertisement" in blob:
+        score += 35
+    if "apply online" in blob or "apply" in blob:
+        score += 25
+    if url.lower().split("?")[0].endswith(".pdf"):
+        score += 20
+    return score
+
+
+def extract_official_links(detail_url: str):
+    """Open the FreeJobAlert detail page and return official notification/app/PDF links.
+
+    FreeJobAlert remains only the discovery source. The public-facing official_url
+    is selected from external links that look like first-party government or
+    institution links.
+    """
+    try:
+        html = fetch_html(detail_url, HEADERS, timeout=20, retries=2, backoff=3)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[official-link] could not open {detail_url}: {exc}")
+        return None, None, None
+
+    soup = BeautifulSoup(html, "html.parser")
+    candidates = []
+
+    for a in soup.find_all("a", href=True):
+        href = urljoin(detail_url, a["href"].strip())
+        text = a.get_text(" ", strip=True)
+        if not is_external_candidate(href):
+            continue
+        score = score_official_link(href, text)
+        if score >= 25:
+            candidates.append((score, href, text))
+
+    if not candidates:
+        return None, None, None
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    official_url = candidates[0][1]
+    pdf_url = next((url for _, url, _ in candidates if url.lower().split("?")[0].endswith(".pdf")), None)
+    apply_url = next(
+        (url for _, url, text in candidates if "apply" in f"{text} {url}".lower()),
+        None,
+    )
+    return official_url, pdf_url, apply_url
+
+
+def make_description(title: str, department: str) -> str:
+    return (
+        f"Get the latest information about {title}. This page provides an "
+        f"original summary of the {department} notice, important dates and a "
+        f"link to the official notification. Always verify eligibility and "
+        f"application details from the official source before applying."
+    )
+
+
 def fetch_notices():
     html = fetch_html(LISTING_URL, HEADERS)
     soup = BeautifulSoup(html, "html.parser")
@@ -98,54 +156,55 @@ def fetch_notices():
     for table in soup.find_all("table"):
         heading = heading_for_table(table)
         if "uttarakhand" not in heading.lower():
-            continue  # skip sitewide/other-state widgets
+            continue
 
         table_category = category_from_heading(heading)
 
-        rows = table.find_all("tr")
-        for row in rows:
-            cells = row.find_all("td")
-            if not cells:
-                continue  # header row
+        for row in table.find_all("tr"):
+            if not row.find_all("td"):
+                continue
 
             link_tag = row.find("a", href=True)
             if not link_tag:
                 continue
 
             title = link_tag.get_text(strip=True)
-            if not title or len(title) < 8:
+            detail_url = urljoin(LISTING_URL, link_tag["href"].strip())
+            if not title or len(title) < 8 or detail_url in seen_urls:
                 continue
-
-            official_url = link_tag["href"]
-            if official_url in seen_urls:
-                continue
-            seen_urls.add(official_url)
+            seen_urls.add(detail_url)
 
             row_text = row.get_text(" ", strip=True)
             date_match = DATE_CELL_PATTERN.search(row_text)
             published_date = parse_date(date_match.group(0)) if date_match else None
-
             category = table_category or classify(title)
+            department = guess_department(title)
+
+            official_url, pdf_url, _apply_url = extract_official_links(detail_url)
+            if not official_url:
+                print(f"[skip] no official external link found: {title}")
+                continue
 
             notices.append(
                 {
                     "title": title,
-                    "department": guess_department(title),
+                    "department": department,
                     "category": category,
-                    "description": title,
+                    "description": make_description(title, department),
                     "published_date": published_date,
-                    "source_url": LISTING_URL,
+                    "source_url": detail_url,
                     "official_url": official_url,
-                    "pdf_url": official_url if official_url.lower().endswith(".pdf") else None,
+                    "pdf_url": pdf_url,
                 }
             )
+            time.sleep(0.4)
 
     return notices
 
 
 def run():
     notices = fetch_notices()
-    print(f"[FreeJobAlert] fetched {len(notices)} candidate notices")
+    print(f"[FreeJobAlert] fetched {len(notices)} notices with official links")
     for notice in notices:
         save_update(notice)
 
