@@ -1,36 +1,23 @@
 """
 UKPSC (Uttarakhand Public Service Commission) collector.
 
-IMPORTANT: I could not browse ukpsc.gov.in from this environment to read its
-live HTML, so the CSS selectors below are placeholders based on the common
-structure of Indian government notice-board pages (a table or list of
-<a> tags, each with a date next to it). Before this will work you MUST:
+NOTE: the previous version pointed at "ukpsc.gov.in", which does not
+resolve at all - the real, working domain (confirmed by fetching it
+directly) is psc.uk.gov.in. This version also uses the shared, selector-
+free extractor in extract.py instead of a hand-guessed "table tr" CSS
+selector, since the site's actual markup wasn't available to inspect
+from this environment.
 
-    1. Open https://ukpsc.gov.in (or the current notices/recruitment page)
-       in your browser.
-    2. Right-click a notice link -> Inspect, and find:
-         - the parent container (table row / <li> / <div>) that repeats
-           for each notice
-         - the exact tag + class holding the title/link
-         - the exact tag + class holding the date (if present)
-    3. Update LISTING_URL and the three selectors marked "ADJUST ME" below.
-
-Everything else (de-duplication, classification, saving) will work as-is
-once the selectors are correct.
+If GitHub Actions logs show 0 notices found, run `python ukpsc.py` locally
+first to see what extract.py picked up - it prints a preview.
 """
-
-import re
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
 
 from db import save_update
 from classify import classify
+from extract import fetch_html, extract_notices, parse_date  # noqa: F401  (parse_date kept for other modules that import it from here)
 
 DEPARTMENT = "UKPSC"
-
-# ADJUST ME: the actual notices / recruitment listing page
-LISTING_URL = "https://ukpsc.gov.in/"
+LISTING_URL = "https://psc.uk.gov.in/"
 
 HEADERS = {
     "User-Agent": (
@@ -40,60 +27,25 @@ HEADERS = {
 }
 
 
-def parse_date(text: str):
-    """Try a few common Indian-government date formats; return None if unknown."""
-    text = text.strip()
-    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%d %B %Y", "%d-%b-%Y"):
-        try:
-            return datetime.strptime(text, fmt).date().isoformat()
-        except ValueError:
-            continue
-    return None
-
-
 def fetch_notices():
-    resp = requests.get(LISTING_URL, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # ADJUST ME: the repeating container for each notice row.
-    # Common patterns: soup.select("table tr"), soup.select("ul.notice-list li"),
-    # soup.select("div.notice-item")
-    rows = soup.select("table tr")
+    html = fetch_html(LISTING_URL, HEADERS)
+    raw_notices = extract_notices(html, LISTING_URL)
 
     notices = []
-    for row in rows:
-        # ADJUST ME: the <a> tag holding the notice title + link
-        link_tag = row.select_one("a")
-        if not link_tag or not link_tag.get("href"):
-            continue
-
-        title = link_tag.get_text(strip=True)
-        if not title or len(title) < 8:
-            continue
-
-        href = link_tag["href"]
-        official_url = href if href.startswith("http") else requests.compat.urljoin(LISTING_URL, href)
-
-        # ADJUST ME: the cell/span holding the published date, if present
-        date_tag = row.select_one("td.date, span.date")
-        published_date = parse_date(date_tag.get_text()) if date_tag else None
-
-        pdf_url = official_url if official_url.lower().endswith(".pdf") else None
-
+    for n in raw_notices:
+        pdf_url = n["official_url"] if n["official_url"].lower().endswith(".pdf") else None
         notices.append(
             {
-                "title": title,
+                "title": n["title"],
                 "department": DEPARTMENT,
-                "category": classify(title),
-                "description": title,
-                "published_date": published_date,
+                "category": classify(n["title"]),
+                "description": n["title"],
+                "published_date": n["published_date"],
                 "source_url": LISTING_URL,
-                "official_url": official_url,
+                "official_url": n["official_url"],
                 "pdf_url": pdf_url,
             }
         )
-
     return notices
 
 
