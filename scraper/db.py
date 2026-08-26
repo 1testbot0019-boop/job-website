@@ -1,13 +1,4 @@
-"""
-Shared database helper for all scrapers.
-
-Uses the Supabase REST API (via the `supabase` python client) so we don't
-need a raw Postgres connection from GitHub Actions.
-
-Environment variables required (set as GitHub Actions secrets):
-    SUPABASE_URL       - e.g. https://xxxx.supabase.co
-    SUPABASE_KEY       - service_role key (NOT the public anon key)
-"""
+"""Shared database helper for all scrapers."""
 
 import os
 import re
@@ -33,41 +24,34 @@ def get_client() -> Client:
 
 
 def make_slug(title: str, department: str) -> str:
-    """Turn 'UKPSC Lecturer Recruitment 2026' into 'ukpsc-lecturer-recruitment-2026'."""
     base = f"{department}-{title}"
-    slug = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
-    return slug[:180]
+    return re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")[:180]
 
 
-def make_hash(title: str, official_url: str) -> str:
-    """Stable fingerprint used to detect duplicates / re-runs."""
-    return hashlib.sha256(f"{title.strip()}|{official_url.strip()}".encode()).hexdigest()
-
-
-def already_exists(content_hash: str) -> bool:
-    client = get_client()
-    res = (
-        client.table("updates")
-        .select("id")
-        .eq("content_hash", content_hash)
-        .limit(1)
-        .execute()
-    )
-    return len(res.data) > 0
+def make_hash(title: str, source_url: str) -> str:
+    """Use the source detail page as the stable identity across official-link changes."""
+    return hashlib.sha256(f"{title.strip()}|{source_url.strip()}".encode()).hexdigest()
 
 
 def save_update(record: dict) -> None:
-    """
-    record must contain: title, category, department, description,
-    published_date, source_url, official_url, pdf_url (optional)
-    """
+    """Insert a new notice or update an existing notice with fresher official links."""
     client = get_client()
-    record = dict(record)  # don't mutate caller's dict
+    record = dict(record)
     record["slug"] = make_slug(record["title"], record["department"])
-    record["content_hash"] = make_hash(record["title"], record["official_url"])
+    record["content_hash"] = make_hash(record["title"], record["source_url"])
 
-    if already_exists(record["content_hash"]):
-        return  # duplicate, ignore
+    existing = (
+        client.table("updates")
+        .select("id")
+        .eq("content_hash", record["content_hash"])
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        client.table("updates").update(record).eq("id", existing.data[0]["id"]).execute()
+        print(f"[updated] {record['department']} :: {record['title']}")
+        return
 
     client.table("updates").insert(record).execute()
     print(f"[saved] {record['department']} :: {record['title']}")
