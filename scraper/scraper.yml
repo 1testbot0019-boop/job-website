@@ -26,6 +26,6 @@ jobs:
 
       - name: Run collectors
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_URL: ${{ https://pglxtutlkavrtwndnuul.supabase.co }}
+          SUPABASE_KEY: ${{ sb_publishable_LvTCyvUVJvZt6kvL1RAv8w_H_SEKhdQ }}
         run: python main.py
