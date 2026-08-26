@@ -9,12 +9,9 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: scraper
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -24,8 +21,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run collectors
+      - name: Run scraper
         env:
-          SUPABASE_URL: ${{ https://pglxtutlkavrtwndnuul.supabase.co }}
-          SUPABASE_KEY: ${{ sb_publishable_LvTCyvUVJvZt6kvL1RAv8w_H_SEKhdQ }}
-        run: python main.py
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scraper/main.py
