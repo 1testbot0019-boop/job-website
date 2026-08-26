@@ -16,6 +16,7 @@ as you see what actually gets captured from each site.
 """
 
 import re
+import time
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -53,10 +54,25 @@ def looks_like_notice(text: str) -> bool:
     return True
 
 
-def fetch_html(url: str, headers: dict, timeout: int = 30) -> str:
-    resp = requests.get(url, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return resp.text
+def fetch_html(url: str, headers: dict, timeout: int = 30, retries: int = 3, backoff: int = 10) -> str:
+    """
+    Fetch with retries. Indian government sites are frequently flaky/slow
+    rather than permanently unreachable - a single timeout on one run and
+    a clean fetch on the next run for the *same* URL is common, so retrying
+    with a short backoff meaningfully improves the success rate.
+    """
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            return resp.text
+        except requests.exceptions.RequestException as exc:
+            last_exc = exc
+            print(f"[retry] {url} attempt {attempt}/{retries} failed: {exc}")
+            if attempt < retries:
+                time.sleep(backoff)
+    raise last_exc
 
 
 def extract_notices(html: str, base_url: str):
