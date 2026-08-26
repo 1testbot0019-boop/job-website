@@ -26,6 +26,6 @@ jobs:
 
       - name: Run collectors
         env:
-          SUPABASE_URL: "https://pglxtutlkavrtwndnuul.supabase.co"
-          SUPABASE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBnbHh0dXRsa2F2cnR3bmRudXVsIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzcyMjQ0NCwiZXhwIjoyMTAzMjk4NDQ0fQ.LdHMGH6FfzT-2WcVjWz1UGkCkSD8dq2b4jcb2YBc1Oc"
+         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python main.py
