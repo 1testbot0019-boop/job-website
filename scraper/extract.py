@@ -37,7 +37,7 @@ NAV_BLOCKLIST = {
 def parse_date(text: str):
     """Try common Indian-government date formats; return ISO date or None."""
     text = text.strip()
-    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%d-%m-%y", "%d/%m/%y", "%d %B %Y", "%d-%b-%Y"):
+    for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%d-%m-%y", "%d/%m/%y", "%d %B %Y", "%d-%b-%Y", "%d %b %Y"):
         try:
             return datetime.strptime(text, fmt).date().isoformat()
         except ValueError:

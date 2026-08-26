@@ -2,14 +2,25 @@
 Entry point run by GitHub Actions on a schedule.
 Runs every collector; one source failing (site down, selector broken)
 should never stop the others from running.
+
+NOTE: ukpsc, uksssc and police (the direct government-site collectors)
+are disabled here because those sites block requests from GitHub Actions'
+cloud IP ranges - confirmed by the fact they load fine from a normal
+Indian home connection but consistently time out from GitHub's servers.
+freejobalert mirrors the same official notices and isn't locked down the
+same way, so it's the active source for now. The government-site files
+are kept in this folder (not deleted) in case you later run the scraper
+from an Indian IP (self-hosted runner or an Indian VPS) and want to
+re-enable them for more direct, first-party sourcing.
 """
 
 import traceback
-import ukpsc
-import uksssc
-import police
+import freejobalert
+# import ukpsc
+# import uksssc
+# import police
 
-COLLECTORS = [ukpsc, uksssc, police]
+COLLECTORS = [freejobalert]
 
 
 def main():
