@@ -1,9 +1,4 @@
-"""FreeJobAlert discovery collector with structured article extraction.
-
-FreeJobAlert is used only to discover notices. Public-facing links are selected
-from verified external government/institution URLs and never point back to
-FreeJobAlert as an "official" notification.
-"""
+"""FreeJobAlert discovery collector with verified official-link extraction."""
 
 import re
 import time
@@ -26,6 +21,12 @@ DEPARTMENT_HINTS = {
 
 LISTING_URL = "https://www.freejobalert.com/uttarakhand-government-jobs/"
 FREEJOBALERT_HOSTS = {"freejobalert.com", "www.freejobalert.com"}
+SOCIAL_HOSTS = {
+    "facebook.com", "www.facebook.com", "twitter.com", "www.twitter.com",
+    "x.com", "www.x.com", "youtube.com", "www.youtube.com",
+    "instagram.com", "www.instagram.com", "telegram.me", "t.me",
+    "whatsapp.com", "www.whatsapp.com", "linkedin.com", "www.linkedin.com",
+}
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -74,35 +75,76 @@ def is_external_candidate(url):
     host = parsed.netloc.lower().split(":")[0]
     if host in FREEJOBALERT_HOSTS or host.endswith(".freejobalert.com"):
         return False
-    blocked = (
-        "facebook.com", "twitter.com", "x.com", "youtube.com", "instagram.com",
-        "telegram.me", "t.me", "whatsapp.com", "linkedin.com",
-    )
-    return not any(domain in host for domain in blocked)
+    if host in SOCIAL_HOSTS or any(host.endswith("." + domain) for domain in SOCIAL_HOSTS):
+        return False
+    return True
 
 
-def score_official_link(url, text):
-    host = urlparse(url).netloc.lower()
-    blob = f"{text} {url}".lower()
+def official_host_score(host, title):
+    host = host.lower()
+    title = title.lower()
     score = 0
+
+    # First-party Indian government/institution domains.
     if host.endswith(".gov.in") or ".gov.in" in host:
         score += 100
     if host.endswith(".nic.in") or ".nic.in" in host:
         score += 95
     if host.endswith(".ac.in") or ".ac.in" in host:
+        score += 70
+    if host.endswith(".edu.in") or ".edu.in" in host:
         score += 60
-    if any(word in host for word in ("ukpsc", "uksssc", "iit", "nit", "powergrid", "rrb", "ibps")):
+
+    # Match the organisation named in the job title.
+    organisation_tokens = {
+        "ukpsc": ("psc.uk.gov.in", "ukpsc"),
+        "uksssc": ("sssc.uk.gov.in", "uksssc"),
+        "police": ("uttarakhandpolice.uk.gov.in", "police"),
+        "iit roorkee": ("iitr.ac.in", "iitroorkee", "iit-roorkee"),
+        "nit uttarakhand": ("nituk.ac.in", "nituttarakhand"),
+        "powergrid": ("powergrid.in", "powergrid"),
+    }
+    for token, hosts in organisation_tokens.items():
+        if token in title and any(h in host for h in hosts):
+            score += 120
+            break
+
+    return score
+
+
+def score_official_link(url, text, title, context=""):
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    blob = f"{text} {url} {context}".lower()
+    title_lower = title.lower()
+    score = official_host_score(host, title_lower)
+
+    label_scores = [
+        ("official notification", 180),
+        ("official advertisement", 170),
+        ("download notification", 160),
+        ("notification pdf", 155),
+        ("advertisement", 120),
+        ("notification", 110),
+        ("official website", 80),
+        ("notice", 70),
+        ("apply online", 55),
+        ("apply", 35),
+    ]
+    for phrase, value in label_scores:
+        if phrase in blob:
+            score += value
+
+    if parsed.path.lower().split("?")[0].endswith(".pdf"):
         score += 45
-    if "official notification" in blob or "official advertisement" in blob:
-        score += 90
-    if "notification" in blob or "advertisement" in blob:
-        score += 45
-    if "apply online" in blob or "apply" in blob:
-        score += 30
-    if "official website" in blob:
+    if any(word in parsed.path.lower() for word in ("notification", "advertisement", "recruitment", "career", "vacancy", "notice")):
         score += 35
-    if url.lower().split("?")[0].endswith(".pdf"):
-        score += 20
+
+    # Penalise generic third-party job portals, while allowing genuine first-party domains.
+    third_party = ("sarkariresult", "freejobalert", "rojgar", "jagran", "freshers", "careerpower")
+    if any(part in host for part in third_party):
+        score -= 200
+
     return score
 
 
@@ -134,25 +176,51 @@ def extract_section_text(soup, patterns):
     return None
 
 
-def extract_structured_content(detail_url):
+def extract_structured_content(detail_url, job_title):
     html = fetch_html(detail_url, HEADERS, timeout=20, retries=2, backoff=3)
     soup = BeautifulSoup(html, "html.parser")
 
     candidates = []
+    seen = set()
+
     for a in soup.find_all("a", href=True):
         href = urljoin(detail_url, a["href"].strip())
         text = clean(a.get_text(" ", strip=True))
-        if is_external_candidate(href):
-            score = score_official_link(href, text)
-            if score >= 25:
-                candidates.append((score, href, text))
+        if not is_external_candidate(href):
+            continue
+        if href in seen:
+            continue
+        seen.add(href)
+
+        parent_context = ""
+        if a.parent is not None:
+            parent_context = clean(a.parent.get_text(" ", strip=True))
+        grandparent = a.parent.parent if a.parent is not None else None
+        if grandparent is not None:
+            parent_context += " " + clean(grandparent.get_text(" ", strip=True))
+
+        score = score_official_link(href, text, job_title, parent_context)
+        if score >= 70:
+            candidates.append((score, href, text))
+
     candidates.sort(key=lambda item: item[0], reverse=True)
 
-    notification_candidates = [x for x in candidates if any(word in f"{x[2]} {x[1]}".lower() for word in ("notification", "advertisement", "notice"))]
-    official_url = notification_candidates[0][1] if notification_candidates else (candidates[0][1] if candidates else None)
-    pdf_url = next((url for _, url, _ in candidates if url.lower().split("?")[0].endswith(".pdf")), None)
-    apply_url = next((url for _, url, text in candidates if "apply" in f"{text} {url}".lower()), None)
-    official_website_url = next((url for score, url, text in candidates if "official website" in text.lower()), None)
+    # The highest-scoring first-party notification/advertisement is the public official URL.
+    official_url = candidates[0][1] if candidates else None
+
+    # Prefer a PDF only when it is itself a strong official candidate.
+    pdf_url = next(
+        (url for score, url, text in candidates if url.lower().split("?")[0].endswith(".pdf") and score >= 120),
+        None,
+    )
+    apply_url = next(
+        (url for score, url, text in candidates if "apply" in f"{text} {url}".lower()),
+        None,
+    )
+    official_website_url = next(
+        (url for score, url, text in candidates if "official website" in text.lower()),
+        None,
+    )
 
     details = {}
     vacancies = []
@@ -222,13 +290,13 @@ def fetch_notices():
             seen_urls.add(detail_url)
 
             try:
-                extracted = extract_structured_content(detail_url)
+                extracted = extract_structured_content(detail_url, title)
             except Exception as exc:  # noqa: BLE001
                 print(f"[skip] extraction failed for {title}: {exc}")
                 continue
 
             if not extracted["official_url"]:
-                print(f"[skip] no verified external official link found: {title}")
+                print(f"[skip] no verified official link found: {title}")
                 continue
 
             row_text = clean(row.get_text(" ", strip=True))
