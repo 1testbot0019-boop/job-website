@@ -4,7 +4,7 @@ on:
   schedule:
     # Every 3 hours. GitHub Actions cron is UTC; adjust as you like.
     - cron: "0 */3 * * *"
-  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab
+  workflow_dispatch: {}
 
 jobs:
   scrape:
@@ -24,8 +24,34 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Verify Supabase configuration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -e
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "ERROR: GitHub Actions secret SUPABASE_URL is missing or empty."
+            exit 1
+          fi
+          if [ -z "$SUPABASE_KEY" ]; then
+            echo "ERROR: GitHub Actions secret SUPABASE_KEY is missing or empty."
+            exit 1
+          fi
+
+          case "$SUPABASE_URL" in
+            https://*.supabase.co) ;;
+            *)
+              echo "ERROR: SUPABASE_URL is present but does not look like a Supabase project URL."
+              exit 1
+              ;;
+          esac
+
+          echo "OK: SUPABASE_URL is present."
+          echo "OK: SUPABASE_KEY is present (value hidden)."
+
       - name: Run collectors
         env:
-         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python main.py
