@@ -5,76 +5,750 @@ export const revalidate = 300;
 
 export async function generateMetadata({ params }) {
   const update = await getUpdateBySlug(params.slug);
+
   if (!update) return {};
+
   return {
     title: `${update.title} | Uttarakhand Rojgar`,
-    description: update.meta_description || update.description?.slice(0, 155) || update.title,
+    description:
+      update.meta_description ||
+      update.description?.slice(0, 155) ||
+      update.title,
   };
 }
 
 function formatDate(dateStr) {
-  if (!dateStr) return "Not listed";
+  if (!dateStr || typeof dateStr === "object") {
+    return "Not listed";
+  }
+
   const parsed = new Date(dateStr);
-  if (Number.isNaN(parsed.getTime())) return dateStr;
-  return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" });
+
+  if (Number.isNaN(parsed.getTime())) {
+    return String(dateStr);
+  }
+
+  return parsed.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function safeText(value, fallback = "") {
+  if (value === null || value === undefined) {
+    return fallback;
+  }
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number"
+  ) {
+    return String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => safeText(item, ""))
+      .filter(Boolean)
+      .join(", ") || fallback;
+  }
+
+  if (typeof value === "object") {
+    const values = Object.values(value)
+      .map((item) => safeText(item, ""))
+      .filter(Boolean);
+
+    return values.join(", ") || fallback;
+  }
+
+  return fallback;
 }
 
 function Section({ title, children }) {
   if (!children) return null;
-  return <section className="mb-10"><h2 className="font-display text-2xl text-ridge mb-4">{title}</h2>{children}</section>;
+
+  return (
+    <section className="mb-10">
+      <h2 className="font-display text-2xl text-ridge mb-4">
+        {title}
+      </h2>
+
+      {children}
+    </section>
+  );
 }
 
-function LinkButton({ href, children, primary = false }) {
-  if (!href) return null;
-  return <a href={href} target="_blank" rel="noopener noreferrer" className={primary ? "bg-marigold text-ink px-5 py-3 font-body font-semibold hover:opacity-90 transition-opacity" : "border border-ridge text-ridge px-5 py-3 font-body hover:bg-ridge hover:text-paper transition-colors"}>{children}</a>;
+function LinkButton({
+  href,
+  children,
+  primary = false,
+}) {
+  if (
+    !href ||
+    typeof href !== "string"
+  ) {
+    return null;
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={
+        primary
+          ? "bg-marigold text-ink px-5 py-3 font-body font-semibold hover:opacity-90 transition-opacity"
+          : "border border-ridge text-ridge px-5 py-3 font-body hover:bg-ridge hover:text-paper transition-colors"
+      }
+    >
+      {children}
+    </a>
+  );
 }
 
-export default async function NoticeDetailPage({ params }) {
+function getOfficialNotificationUrl(update) {
+  /*
+   * Priority:
+   *
+   * 1. official_notification_url
+   * 2. official_website_url
+   *
+   * We deliberately DO NOT use official_url here as the
+   * first choice because official_url may contain a PDF.
+   */
+
+  const notificationUrl =
+    typeof update?.official_notification_url === "string"
+      ? update.official_notification_url.trim()
+      : "";
+
+  const websiteUrl =
+    typeof update?.official_website_url === "string"
+      ? update.official_website_url.trim()
+      : "";
+
+  /*
+   * If official_notification_url is a PDF, don't use it
+   * for the "Visit Official Notification" button.
+   */
+  const notificationIsPdf =
+    notificationUrl
+      .toLowerCase()
+      .split("?")[0]
+      .endsWith(".pdf");
+
+  if (
+    notificationUrl &&
+    !notificationIsPdf
+  ) {
+    return notificationUrl;
+  }
+
+  if (websiteUrl) {
+    return websiteUrl;
+  }
+
+  /*
+   * Last fallback.
+   *
+   * This is only used if no separate notification page
+   * or official website has been stored.
+   */
+  return "";
+}
+
+function getPdfUrl(update) {
+  /*
+   * PDF button should ONLY use pdf_url.
+   */
+
+  const pdfUrl =
+    typeof update?.pdf_url === "string"
+      ? update.pdf_url.trim()
+      : "";
+
+  if (pdfUrl) {
+    return pdfUrl;
+  }
+
+  /*
+   * Fallback for old records where official_url itself
+   * is a PDF.
+   */
+  const officialUrl =
+    typeof update?.official_url === "string"
+      ? update.official_url.trim()
+      : "";
+
+  const officialIsPdf =
+    officialUrl
+      .toLowerCase()
+      .split("?")[0]
+      .endsWith(".pdf");
+
+  if (officialIsPdf) {
+    return officialUrl;
+  }
+
+  return "";
+}
+
+export default async function NoticeDetailPage({
+  params,
+}) {
   const update = await getUpdateBySlug(params.slug);
-  if (!update) notFound();
 
-  const dates = update.important_dates || {};
-  const vacancies = Array.isArray(update.vacancy_details) ? update.vacancy_details : [];
-  const detailGroups = update.notification_details || {};
+  if (!update) {
+    notFound();
+  }
+
+  const dates =
+    update.important_dates &&
+    typeof update.important_dates === "object"
+      ? update.important_dates
+      : {};
+
+  const vacancies =
+    Array.isArray(update.vacancy_details)
+      ? update.vacancy_details
+      : [];
+
+  const detailGroups =
+    update.notification_details &&
+    typeof update.notification_details === "object"
+      ? update.notification_details
+      : {};
+
+  const category = safeText(
+    update.category,
+    "NOTIFICATION"
+  );
+
+  const department = safeText(
+    update.department,
+    "Uttarakhand Government"
+  );
+
+  const title = safeText(
+    update.title,
+    "Recruitment Notification"
+  );
+
+  const description = safeText(
+    update.description,
+    "Latest recruitment information, eligibility, dates and official links."
+  );
+
+  /*
+   * IMPORTANT:
+   *
+   * Visit Official Notification:
+   * official_notification_url
+   *
+   * Download Official PDF:
+   * pdf_url
+   *
+   * These are intentionally kept separate.
+   */
+  const officialNotificationUrl =
+    getOfficialNotificationUrl(update);
+
+  const pdfUrl =
+    getPdfUrl(update);
+
+  const applyUrl =
+    typeof update.apply_online_url === "string"
+      ? update.apply_online_url.trim()
+      : "";
+
+  const officialWebsiteUrl =
+    typeof update.official_website_url === "string"
+      ? update.official_website_url.trim()
+      : "";
 
   return (
     <article className="max-w-4xl pb-10">
-      <div className="font-mono text-xs uppercase tracking-widest text-marigold mb-3">{update.category.replace("_", " ")} · {update.department}</div>
-      <h1 className="font-display text-3xl md:text-5xl text-ridge mb-4 leading-tight">{update.title}</h1>
-      <p className="text-ink/65 text-lg mb-8">{update.description || "Latest recruitment information, eligibility, dates and official links."}</p>
 
-      <div className="border border-stone bg-white/60 p-5 mb-10 flex flex-wrap gap-3">
-        <LinkButton href={update.official_url} primary>Visit Official Notification</LinkButton>
-        <LinkButton href={update.apply_url}>Apply Online</LinkButton>
-        <LinkButton href={update.pdf_url}>Download Official PDF</LinkButton>
-        <LinkButton href={update.official_website_url}>Official Website</LinkButton>
+      {/* =====================================================
+          HEADER
+      ===================================================== */}
+
+      <div className="font-mono text-xs uppercase tracking-widest text-marigold mb-3">
+        {category.replace(/_/g, " ")}
+        {" · "}
+        {department}
       </div>
 
+      <h1 className="font-display text-3xl md:text-5xl text-ridge mb-4 leading-tight">
+        {title}
+      </h1>
+
+      <p className="text-ink/65 text-lg mb-8">
+        {description}
+      </p>
+
+
+      {/* =====================================================
+          IMPORTANT LINKS
+      ===================================================== */}
+
+      <div className="border border-stone bg-white/60 p-5 mb-10 flex flex-wrap gap-3">
+
+        {/* VISIT OFFICIAL NOTIFICATION
+            This is now a WEB PAGE only.
+            It will NOT intentionally open a PDF.
+        */}
+
+        <LinkButton
+          href={officialNotificationUrl}
+          primary
+        >
+          Visit Official Notification
+        </LinkButton>
+
+
+        {/* APPLY ONLINE */}
+
+        <LinkButton href={applyUrl}>
+          Apply Online
+        </LinkButton>
+
+
+        {/* DOWNLOAD PDF
+            This uses pdf_url separately.
+        */}
+
+        <LinkButton href={pdfUrl}>
+          Download Official PDF
+        </LinkButton>
+
+
+        {/* OFFICIAL WEBSITE */}
+
+        <LinkButton href={officialWebsiteUrl}>
+          Official Website
+        </LinkButton>
+
+      </div>
+
+
+      {/* =====================================================
+          RECRUITMENT OVERVIEW
+      ===================================================== */}
+
       <Section title="Recruitment Overview">
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-          <div className="border border-stone p-4"><strong>Organisation:</strong><br />{update.department}</div>
-          <div className="border border-stone p-4"><strong>Category:</strong><br />{update.category.replace("_", " ")}</div>
-          <div className="border border-stone p-4"><strong>Published:</strong><br />{formatDate(update.published_date)}</div>
-          <div className="border border-stone p-4"><strong>Status:</strong><br />Check the official notice for the latest status.</div>
+
+          <div className="border border-stone p-4">
+            <strong>Organisation:</strong>
+            <br />
+            {department}
+          </div>
+
+          <div className="border border-stone p-4">
+            <strong>Category:</strong>
+            <br />
+            {category.replace(/_/g, " ")}
+          </div>
+
+          <div className="border border-stone p-4">
+            <strong>Published:</strong>
+            <br />
+            {formatDate(update.published_date)}
+          </div>
+
+          <div className="border border-stone p-4">
+            <strong>Status:</strong>
+            <br />
+            Check the official notice for the latest status.
+          </div>
+
         </div>
+
       </Section>
 
-      {Object.keys(dates).length > 0 && <Section title="Important Dates"><div className="overflow-x-auto"><table className="w-full border-collapse text-sm"><tbody>{Object.entries(dates).map(([label, value]) => <tr key={label} className="border border-stone"><th className="text-left bg-paper p-3 w-1/2">{label}</th><td className="p-3">{String(value)}</td></tr>)}</tbody></table></div></Section>}
 
-      {vacancies.length > 0 && <Section title="Vacancy Details"><div className="overflow-x-auto"><table className="w-full border-collapse text-sm"><thead><tr>{Object.keys(vacancies[0]).map(key => <th key={key} className="border border-stone bg-paper text-left p-3">{key}</th>)}</tr></thead><tbody>{vacancies.map((row, index) => <tr key={index}>{Object.keys(vacancies[0]).map(key => <td key={key} className="border border-stone p-3">{row[key]}</td>)}</tr>)}</tbody></table></div></Section>}
+      {/* =====================================================
+          IMPORTANT DATES
+      ===================================================== */}
 
-      <Section title="Eligibility Criteria">{update.eligibility ? <p className="leading-8 whitespace-pre-line">{update.eligibility}</p> : <p className="leading-8">Please check the official notification for post-wise educational qualifications and eligibility conditions.</p>}</Section>
-      {update.age_limit && <Section title="Age Limit"><p className="leading-8 whitespace-pre-line">{update.age_limit}</p></Section>}
-      {update.application_fee && <Section title="Application Fee"><p className="leading-8 whitespace-pre-line">{update.application_fee}</p></Section>}
-      {update.selection_process && <Section title="Selection Process"><p className="leading-8 whitespace-pre-line">{update.selection_process}</p></Section>}
+      {Object.keys(dates).length > 0 && (
 
-      {Object.entries(detailGroups).map(([heading, rows]) => <Section key={heading} title={heading}><div className="overflow-x-auto"><table className="w-full border-collapse text-sm"><tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, cellIndex) => <td key={cellIndex} className="border border-stone p-3">{cell}</td>)}</tr>)}</tbody></table></div></Section>)}
+        <Section title="Important Dates">
 
-      <Section title="How to Apply">{update.how_to_apply ? <p className="leading-8 whitespace-pre-line">{update.how_to_apply}</p> : <ol className="list-decimal pl-6 space-y-2 leading-8"><li>Open the official notification using the button above.</li><li>Read eligibility, vacancy and date information carefully.</li><li>Use only the official application portal for submission.</li><li>Keep your application number and a copy of the submitted form.</li></ol>}</Section>
+          <div className="overflow-x-auto">
 
-      <Section title="Important Links"><div className="flex flex-wrap gap-3"><LinkButton href={update.official_url} primary>Official Notification</LinkButton><LinkButton href={update.apply_url}>Apply Online</LinkButton><LinkButton href={update.pdf_url}>Notification PDF</LinkButton><LinkButton href={update.official_website_url}>Official Website</LinkButton></div></Section>
+            <table className="w-full border-collapse text-sm">
 
-      <aside className="border border-stone bg-white/40 p-5 text-sm leading-relaxed"><strong>Disclaimer:</strong> This page presents recruitment information in an easy-to-read format. Before applying, always verify vacancies, eligibility, dates, fees and instructions from the official notification and official website.</aside>
+              <tbody>
+
+                {Object.entries(dates).map(
+                  ([label, value]) => (
+
+                    <tr
+                      key={label}
+                      className="border border-stone"
+                    >
+
+                      <th className="text-left bg-paper p-3 w-1/2">
+                        {safeText(label)}
+                      </th>
+
+                      <td className="p-3">
+                        {safeText(value, "Not listed")}
+                      </td>
+
+                    </tr>
+
+                  )
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </Section>
+
+      )}
+
+
+      {/* =====================================================
+          VACANCY DETAILS
+      ===================================================== */}
+
+      {vacancies.length > 0 && (
+
+        <Section title="Vacancy Details">
+
+          <div className="overflow-x-auto">
+
+            <table className="w-full border-collapse text-sm">
+
+              <thead>
+
+                <tr>
+
+                  {Object.keys(vacancies[0] || {}).map(
+                    (key) => (
+
+                      <th
+                        key={key}
+                        className="border border-stone bg-paper text-left p-3"
+                      >
+                        {safeText(key)}
+                      </th>
+
+                    )
+                  )}
+
+                </tr>
+
+              </thead>
+
+              <tbody>
+
+                {vacancies.map(
+                  (row, index) => (
+
+                    <tr key={index}>
+
+                      {Object.keys(
+                        vacancies[0] || {}
+                      ).map((key) => (
+
+                        <td
+                          key={key}
+                          className="border border-stone p-3"
+                        >
+                          {safeText(
+                            row?.[key],
+                            "-"
+                          )}
+                        </td>
+
+                      ))}
+
+                    </tr>
+
+                  )
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </Section>
+
+      )}
+
+
+      {/* =====================================================
+          ELIGIBILITY
+      ===================================================== */}
+
+      <Section title="Eligibility Criteria">
+
+        {update.qualification ? (
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(update.qualification)}
+          </p>
+
+        ) : update.eligibility ? (
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(update.eligibility)}
+          </p>
+
+        ) : (
+
+          <p className="leading-8">
+            Please check the official notification for
+            post-wise educational qualifications and
+            eligibility conditions.
+          </p>
+
+        )}
+
+      </Section>
+
+
+      {/* =====================================================
+          AGE LIMIT
+      ===================================================== */}
+
+      {update.age_limit && (
+
+        <Section title="Age Limit">
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(update.age_limit)}
+          </p>
+
+        </Section>
+
+      )}
+
+
+      {/* =====================================================
+          APPLICATION FEE
+      ===================================================== */}
+
+      {update.application_fee && (
+
+        <Section title="Application Fee">
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(
+              update.application_fee,
+              "Please check the official notification."
+            )}
+          </p>
+
+        </Section>
+
+      )}
+
+
+      {/* =====================================================
+          SELECTION PROCESS
+      ===================================================== */}
+
+      {update.selection_process && (
+
+        <Section title="Selection Process">
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(update.selection_process)}
+          </p>
+
+        </Section>
+
+      )}
+
+
+      {/* =====================================================
+          ADDITIONAL NOTIFICATION DETAILS
+      ===================================================== */}
+
+      {Object.entries(detailGroups).map(
+        ([heading, rows]) => {
+
+          if (!Array.isArray(rows)) {
+            return null;
+          }
+
+          return (
+
+            <Section
+              key={heading}
+              title={safeText(heading)}
+            >
+
+              <div className="overflow-x-auto">
+
+                <table className="w-full border-collapse text-sm">
+
+                  <tbody>
+
+                    {rows.map(
+                      (row, index) => {
+
+                        if (!Array.isArray(row)) {
+                          return null;
+                        }
+
+                        return (
+
+                          <tr key={index}>
+
+                            {row.map(
+                              (cell, cellIndex) => (
+
+                                <td
+                                  key={cellIndex}
+                                  className="border border-stone p-3"
+                                >
+                                  {safeText(
+                                    cell,
+                                    "-"
+                                  )}
+                                </td>
+
+                              )
+                            )}
+
+                          </tr>
+
+                        );
+                      }
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+            </Section>
+
+          );
+        }
+      )}
+
+
+      {/* =====================================================
+          HOW TO APPLY
+      ===================================================== */}
+
+      <Section title="How to Apply">
+
+        {update.how_to_apply ? (
+
+          <p className="leading-8 whitespace-pre-line">
+            {safeText(update.how_to_apply)}
+          </p>
+
+        ) : (
+
+          <ol className="list-decimal pl-6 space-y-2 leading-8">
+
+            <li>
+              Open the official notification using
+              the button above.
+            </li>
+
+            <li>
+              Read eligibility, vacancy and date
+              information carefully.
+            </li>
+
+            <li>
+              Use only the official application
+              portal for submission.
+            </li>
+
+            <li>
+              Keep your application number and a
+              copy of the submitted form.
+            </li>
+
+          </ol>
+
+        )}
+
+      </Section>
+
+
+      {/* =====================================================
+          IMPORTANT LINKS - BOTTOM
+      ===================================================== */}
+
+      <Section title="Important Links">
+
+        <div className="flex flex-wrap gap-3">
+
+          {/* Official notification page */}
+
+          <LinkButton
+            href={officialNotificationUrl}
+            primary
+          >
+            Official Notification
+          </LinkButton>
+
+
+          {/* Apply */}
+
+          <LinkButton href={applyUrl}>
+            Apply Online
+          </LinkButton>
+
+
+          {/* PDF */}
+
+          <LinkButton href={pdfUrl}>
+            Notification PDF
+          </LinkButton>
+
+
+          {/* Official website */}
+
+          <LinkButton href={officialWebsiteUrl}>
+            Official Website
+          </LinkButton>
+
+        </div>
+
+      </Section>
+
+
+      {/* =====================================================
+          DISCLAIMER
+      ===================================================== */}
+
+      <aside className="border border-stone bg-white/40 p-5 text-sm leading-relaxed">
+
+        <strong>Disclaimer:</strong>{" "}
+
+        This page presents recruitment information
+        in an easy-to-read format. Before applying,
+        always verify vacancies, eligibility, dates,
+        fees and instructions from the official
+        notification and official website.
+
+      </aside>
+
     </article>
   );
 }
