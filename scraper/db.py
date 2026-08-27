@@ -33,6 +33,24 @@ def make_hash(title: str, source_url: str) -> str:
     return hashlib.sha256(f"{title.strip()}|{source_url.strip()}".encode()).hexdigest()
 
 
+def get_freejobalert_records() -> list[dict]:
+    """Return existing records whose official_url still points at FreeJobAlert."""
+    client = get_client()
+    response = (
+        client.table("updates")
+        .select("id,title,official_url,source_url")
+        .ilike("official_url", "%freejobalert.com%")
+        .execute()
+    )
+    return response.data or []
+
+
+def update_official_url(record_id: str, official_url: str) -> None:
+    """Update only the official_url field of an existing record."""
+    client = get_client()
+    client.table("updates").update({"official_url": official_url}).eq("id", record_id).execute()
+
+
 def save_update(record: dict) -> None:
     """Insert a new notice or update an existing notice with fresher official links."""
     client = get_client()
