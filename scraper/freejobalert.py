@@ -6,249 +6,1396 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
-from db import save_update, get_freejobalert_records, update_official_url
+from db import (
+    save_update,
+    get_freejobalert_records,
+    update_official_url,
+    MANUAL_OFFICIAL_URLS,
+)
 from classify import classify
 from extract import fetch_html, parse_date
 
+
+# ============================================================
+# DEPARTMENT HINTS
+# ============================================================
+
 DEPARTMENT_HINTS = {
-    "ukpsc": "UKPSC", "uksssc": "UKSSSC", "police": "Uttarakhand Police",
-    "iit roorkee": "IIT Roorkee", "nit uttarakhand": "NIT Uttarakhand",
-    "powergrid": "POWERGRID", "bel": "BEL", "almora": "DESO Almora",
+    "ukpsc": "UKPSC",
+    "uksssc": "UKSSSC",
+    "police": "Uttarakhand Police",
+    "iit roorkee": "IIT Roorkee",
+    "nit uttarakhand": "NIT Uttarakhand",
+    "powergrid": "POWERGRID",
+    "bel": "BEL",
+    "almora": "DESO Almora",
 }
 
-LISTING_URL = "https://www.freejobalert.com/uttarakhand-government-jobs/"
-FREEJOBALERT_HOSTS = {"freejobalert.com", "www.freejobalert.com"}
+
+# ============================================================
+# URLS / HOSTS
+# ============================================================
+
+LISTING_URL = (
+    "https://www.freejobalert.com/"
+    "uttarakhand-government-jobs/"
+)
+
+FREEJOBALERT_HOSTS = {
+    "freejobalert.com",
+    "www.freejobalert.com",
+}
+
 SOCIAL_HOSTS = {
-    "facebook.com", "www.facebook.com", "twitter.com", "www.twitter.com", "x.com", "www.x.com",
-    "youtube.com", "www.youtube.com", "instagram.com", "www.instagram.com", "telegram.me", "t.me",
-    "whatsapp.com", "www.whatsapp.com", "linkedin.com", "www.linkedin.com",
+    "facebook.com",
+    "www.facebook.com",
+    "twitter.com",
+    "www.twitter.com",
+    "x.com",
+    "www.x.com",
+    "youtube.com",
+    "www.youtube.com",
+    "instagram.com",
+    "www.instagram.com",
+    "telegram.me",
+    "t.me",
+    "whatsapp.com",
+    "www.whatsapp.com",
+    "linkedin.com",
+    "www.linkedin.com",
 }
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36"}
-HEADING_CATEGORY_MAP = [
-    (re.compile(r"result|cut\s*off", re.I), "RESULT"),
-    (re.compile(r"admit card", re.I), "ADMIT_CARD"),
-    (re.compile(r"answer key", re.I), "ANSWER_KEY"),
-    (re.compile(r"syllabus", re.I), "SYLLABUS"),
-    (re.compile(r"job", re.I), "JOB"),
-]
-DATE_CELL_PATTERN = re.compile(r"\d{1,2}\s+\w{3,9}\s+\d{4}")
 
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 "
+        "(Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 "
+        "Chrome/124.0 Safari/537.36"
+    )
+}
+
+
+# ============================================================
+# CATEGORY DETECTION
+# ============================================================
+
+HEADING_CATEGORY_MAP = [
+    (
+        re.compile(r"result|cut\s*off", re.I),
+        "RESULT",
+    ),
+    (
+        re.compile(r"admit card", re.I),
+        "ADMIT_CARD",
+    ),
+    (
+        re.compile(r"answer key", re.I),
+        "ANSWER_KEY",
+    ),
+    (
+        re.compile(r"syllabus", re.I),
+        "SYLLABUS",
+    ),
+    (
+        re.compile(r"job", re.I),
+        "JOB",
+    ),
+]
+
+
+DATE_CELL_PATTERN = re.compile(
+    r"\d{1,2}\s+\w{3,9}\s+\d{4}"
+)
+
+
+# ============================================================
+# BASIC HELPERS
+# ============================================================
 
 def clean(text):
-    return re.sub(r"\s+", " ", text or "").strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        text or ""
+    ).strip()
 
 
 def heading_for_table(table_tag):
-    heading = table_tag.find_previous(["h1", "h2", "h3", "h4"])
-    return clean(heading.get_text(" ", strip=True)) if heading else ""
+    heading = table_tag.find_previous(
+        ["h1", "h2", "h3", "h4"]
+    )
+
+    return (
+        clean(
+            heading.get_text(
+                " ",
+                strip=True
+            )
+        )
+        if heading
+        else ""
+    )
 
 
 def category_from_heading(heading):
+
     for pattern, category in HEADING_CATEGORY_MAP:
-        if pattern.search(heading): return category
+
+        if pattern.search(heading):
+            return category
+
     return None
 
 
 def guess_department(title):
+
     text = title.lower()
-    for hint, dept in DEPARTMENT_HINTS.items():
-        if hint in text: return dept
+
+    for hint, department in DEPARTMENT_HINTS.items():
+
+        if hint in text:
+            return department
+
     return "Uttarakhand Govt"
 
 
+# ============================================================
+# URL CHECKS
+# ============================================================
+
 def is_freejobalert_url(url):
+
     try:
-        host = urlparse(url).netloc.lower().split(":")[0]
-        return host in FREEJOBALERT_HOSTS or host.endswith(".freejobalert.com")
+
+        host = (
+            urlparse(url)
+            .netloc
+            .lower()
+            .split(":")[0]
+        )
+
+        return (
+            host in FREEJOBALERT_HOSTS
+            or host.endswith(
+                ".freejobalert.com"
+            )
+        )
+
     except Exception:
+
         return False
 
 
 def is_external_candidate(url):
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"): return False
-    host = parsed.netloc.lower().split(":")[0]
-    if is_freejobalert_url(url): return False
-    if host in SOCIAL_HOSTS or any(host.endswith("." + domain) for domain in SOCIAL_HOSTS): return False
-    return True
 
+    try:
+
+        parsed = urlparse(url)
+
+        if parsed.scheme not in (
+            "http",
+            "https",
+        ):
+            return False
+
+        host = (
+            parsed.netloc
+            .lower()
+            .split(":")[0]
+        )
+
+        if is_freejobalert_url(url):
+            return False
+
+        if host in SOCIAL_HOSTS:
+            return False
+
+        if any(
+            host.endswith("." + domain)
+            for domain in SOCIAL_HOSTS
+        ):
+            return False
+
+        return True
+
+    except Exception:
+
+        return False
+
+
+# ============================================================
+# OFFICIAL DOMAIN SCORING
+# ============================================================
 
 def official_host_score(host, title):
-    host, title = host.lower(), title.lower()
+
+    host = host.lower()
+    title = title.lower()
+
     score = 0
-    if host.endswith(".gov.in") or ".gov.in" in host: score += 100
-    if host.endswith(".nic.in") or ".nic.in" in host: score += 95
-    if host.endswith(".ac.in") or ".ac.in" in host: score += 70
-    if host.endswith(".edu.in") or ".edu.in" in host: score += 60
+
+    if (
+        host.endswith(".gov.in")
+        or ".gov.in" in host
+    ):
+        score += 100
+
+    if (
+        host.endswith(".nic.in")
+        or ".nic.in" in host
+    ):
+        score += 95
+
+    if (
+        host.endswith(".ac.in")
+        or ".ac.in" in host
+    ):
+        score += 70
+
+    if (
+        host.endswith(".edu.in")
+        or ".edu.in" in host
+    ):
+        score += 60
+
+
     organisation_tokens = {
-        "ukpsc": ("psc.uk.gov.in", "ukpsc"), "uksssc": ("sssc.uk.gov.in", "uksssc"),
-        "police": ("uttarakhandpolice.uk.gov.in", "police"), "iit roorkee": ("iitr.ac.in", "iitroorkee", "iit-roorkee"),
-        "nit uttarakhand": ("nituk.ac.in", "nituttarakhand"), "powergrid": ("powergrid.in", "powergrid"),
-        "bel": ("bel-india.in", "bel.in"), "almora": ("almora.nic.in",),
+
+        "ukpsc": (
+            "psc.uk.gov.in",
+            "ukpsc",
+        ),
+
+        "uksssc": (
+            "sssc.uk.gov.in",
+            "uksssc",
+        ),
+
+        "police": (
+            "uttarakhandpolice.uk.gov.in",
+            "police",
+        ),
+
+        "iit roorkee": (
+            "iitr.ac.in",
+            "iitroorkee",
+            "iit-roorkee",
+        ),
+
+        "nit uttarakhand": (
+            "nituk.ac.in",
+            "nituttarakhand",
+        ),
+
+        "powergrid": (
+            "powergrid.in",
+            "powergrid",
+        ),
+
+        "bel": (
+            "bel-india.in",
+            "bel.in",
+        ),
+
+        "almora": (
+            "almora.nic.in",
+        ),
     }
+
+
     for token, hosts in organisation_tokens.items():
-        if token in title and any(h in host for h in hosts): score += 120; break
+
+        if token in title:
+
+            if any(
+                h in host
+                for h in hosts
+            ):
+
+                score += 120
+                break
+
     return score
 
 
-def score_official_link(url, text, title, context=""):
+# ============================================================
+# OFFICIAL LINK SCORING
+# ============================================================
+
+def score_official_link(
+    url,
+    text,
+    title,
+    context=""
+):
+
     parsed = urlparse(url)
+
     host = parsed.netloc.lower()
-    blob = f"{text} {url} {context}".lower()
-    score = official_host_score(host, title)
-    for phrase, value in [
-        ("official notification", 180), ("official advertisement", 170), ("download notification", 160),
-        ("notification pdf", 155), ("advertisement", 120), ("notification", 110),
-        ("official website", 80), ("notice", 70), ("apply online", 55), ("apply", 35),
-    ]:
-        if phrase in blob: score += value
-    path = parsed.path.lower().split("?")[0]
-    if path.endswith(".pdf"): score += 45
-    if any(word in path for word in ("notification", "advertisement", "recruitment", "career", "vacancy", "notice")): score += 35
-    if any(part in host for part in ("sarkariresult", "freejobalert", "rojgar", "jagran", "freshers", "careerpower")): score -= 200
+
+    blob = (
+        f"{text} "
+        f"{url} "
+        f"{context}"
+    ).lower()
+
+    score = official_host_score(
+        host,
+        title
+    )
+
+
+    phrases = [
+
+        (
+            "official notification",
+            180
+        ),
+
+        (
+            "official advertisement",
+            170
+        ),
+
+        (
+            "download notification",
+            160
+        ),
+
+        (
+            "notification pdf",
+            155
+        ),
+
+        (
+            "advertisement",
+            120
+        ),
+
+        (
+            "notification",
+            110
+        ),
+
+        (
+            "official website",
+            80
+        ),
+
+        (
+            "notice",
+            70
+        ),
+
+        (
+            "apply online",
+            55
+        ),
+
+        (
+            "apply",
+            35
+        ),
+    ]
+
+
+    for phrase, value in phrases:
+
+        if phrase in blob:
+            score += value
+
+
+    path = (
+        parsed.path
+        .lower()
+        .split("?")[0]
+    )
+
+
+    if path.endswith(".pdf"):
+        score += 45
+
+
+    if any(
+        word in path
+        for word in (
+            "notification",
+            "advertisement",
+            "recruitment",
+            "career",
+            "vacancy",
+            "notice",
+        )
+    ):
+
+        score += 35
+
+
+    bad_hosts = (
+        "sarkariresult",
+        "freejobalert",
+        "rojgar",
+        "jagran",
+        "freshers",
+        "careerpower",
+    )
+
+
+    if any(
+        part in host
+        for part in bad_hosts
+    ):
+
+        score -= 200
+
+
     return score
 
+
+# ============================================================
+# TABLE EXTRACTION
+# ============================================================
 
 def extract_key_value_table(table):
+
     rows = []
+
     for tr in table.find_all("tr"):
-        cells = [clean(c.get_text(" ", strip=True)) for c in tr.find_all(["th", "td"])]
-        if len(cells) >= 2: rows.append(cells)
+
+        cells = [
+            clean(
+                c.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+            for c in tr.find_all(
+                ["th", "td"]
+            )
+        ]
+
+        if len(cells) >= 2:
+
+            rows.append(cells)
+
     return rows
 
 
-def extract_section_text(soup, patterns):
-    for heading in soup.find_all(["h2", "h3", "h4", "strong", "b"]):
-        title = clean(heading.get_text(" ", strip=True)).lower()
-        if any(pattern in title for pattern in patterns):
+# ============================================================
+# SECTION TEXT
+# ============================================================
+
+def extract_section_text(
+    soup,
+    patterns
+):
+
+    for heading in soup.find_all(
+        [
+            "h2",
+            "h3",
+            "h4",
+            "strong",
+            "b",
+        ]
+    ):
+
+        title = clean(
+            heading.get_text(
+                " ",
+                strip=True
+            )
+        ).lower()
+
+
+        if any(
+            pattern in title
+            for pattern in patterns
+        ):
+
             parts = []
+
             for node in heading.find_all_next():
-                if node.name in ["h2", "h3", "h4"] and node is not heading: break
-                if node.name in ["p", "li"]:
-                    value = clean(node.get_text(" ", strip=True))
-                    if value and value not in parts: parts.append(value)
-                if len(parts) >= 8: break
-            if parts: return " ".join(parts)
+
+                if (
+                    node.name
+                    in [
+                        "h2",
+                        "h3",
+                        "h4",
+                    ]
+                    and node is not heading
+                ):
+                    break
+
+
+                if node.name in [
+                    "p",
+                    "li",
+                ]:
+
+                    value = clean(
+                        node.get_text(
+                            " ",
+                            strip=True
+                        )
+                    )
+
+                    if (
+                        value
+                        and value not in parts
+                    ):
+
+                        parts.append(value)
+
+
+                if len(parts) >= 8:
+                    break
+
+
+            if parts:
+
+                return " ".join(parts)
+
+
     return None
 
 
-def extract_structured_content(detail_url, job_title):
-    html = fetch_html(detail_url, HEADERS, timeout=20, retries=2, backoff=3)
-    soup = BeautifulSoup(html, "html.parser")
-    candidates, seen = [], set()
-    for a in soup.find_all("a", href=True):
-        href = urljoin(detail_url, a["href"].strip())
-        text = clean(a.get_text(" ", strip=True))
-        if not is_external_candidate(href) or href in seen: continue
+# ============================================================
+# EXTRACT STRUCTURED CONTENT
+# ============================================================
+
+def extract_structured_content(
+    detail_url,
+    job_title
+):
+
+    html = fetch_html(
+        detail_url,
+        HEADERS,
+        timeout=20,
+        retries=2,
+        backoff=3
+    )
+
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+
+    candidates = []
+    seen = set()
+
+
+    for a in soup.find_all(
+        "a",
+        href=True
+    ):
+
+        href = urljoin(
+            detail_url,
+            a["href"].strip()
+        )
+
+        text = clean(
+            a.get_text(
+                " ",
+                strip=True
+            )
+        )
+
+
+        if (
+            not is_external_candidate(
+                href
+            )
+            or href in seen
+        ):
+            continue
+
+
         seen.add(href)
-        context = clean(a.parent.get_text(" ", strip=True)) if a.parent else ""
-        if a.parent and a.parent.parent: context += " " + clean(a.parent.parent.get_text(" ", strip=True))
-        score = score_official_link(href, text, job_title, context)
-        if score >= 70: candidates.append((score, href, text))
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    pdf_candidates = [x for x in candidates if x[1].lower().split("?")[0].endswith(".pdf") and x[0] >= 120]
-    official_url = pdf_candidates[0][1] if pdf_candidates else (candidates[0][1] if candidates else None)
-    pdf_url = pdf_candidates[0][1] if pdf_candidates else None
-    apply_url = next((url for score, url, text in candidates if "apply" in f"{text} {url}".lower()), None)
-    official_website_url = next((url for score, url, text in candidates if "official website" in text.lower()), None)
-    details, vacancies, important_dates = {}, [], {}
-    for table in soup.find_all("table"):
-        heading, rows = heading_for_table(table).lower(), extract_key_value_table(table)
-        if not rows: continue
-        if any(w in heading for w in ("important date", "important dates")):
-            for row in rows: important_dates[row[0]] = " | ".join(row[1:])
-        elif any(w in heading for w in ("vacancy", "post details", "post name")):
+
+
+        context = clean(
+            a.parent.get_text(
+                " ",
+                strip=True
+            )
+        ) if a.parent else ""
+
+
+        if (
+            a.parent
+            and a.parent.parent
+        ):
+
+            context += " " + clean(
+                a.parent.parent.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+        score = score_official_link(
+            href,
+            text,
+            job_title,
+            context
+        )
+
+
+        if score >= 70:
+
+            candidates.append(
+                (
+                    score,
+                    href,
+                    text
+                )
+            )
+
+
+    candidates.sort(
+        key=lambda x: x[0],
+        reverse=True
+    )
+
+
+    # --------------------------------------------------------
+    # Prefer exact official PDF
+    # --------------------------------------------------------
+
+    pdf_candidates = [
+
+        item
+
+        for item in candidates
+
+        if (
+            item[1]
+            .lower()
+            .split("?")[0]
+            .endswith(".pdf")
+            and item[0] >= 120
+        )
+    ]
+
+
+    if pdf_candidates:
+
+        official_url = pdf_candidates[0][1]
+        pdf_url = pdf_candidates[0][1]
+
+    elif candidates:
+
+        official_url = candidates[0][1]
+        pdf_url = None
+
+    else:
+
+        official_url = None
+        pdf_url = None
+
+
+    # --------------------------------------------------------
+    # Apply online URL
+    # --------------------------------------------------------
+
+    apply_url = next(
+
+        (
+            url
+
+            for score, url, text
+            in candidates
+
+            if "apply"
+            in f"{text} {url}".lower()
+        ),
+
+        None
+    )
+
+
+    # --------------------------------------------------------
+    # Official website URL
+    # --------------------------------------------------------
+
+    official_website_url = next(
+
+        (
+            url
+
+            for score, url, text
+            in candidates
+
+            if "official website"
+            in text.lower()
+        ),
+
+        None
+    )
+
+
+    # --------------------------------------------------------
+    # Structured information
+    # --------------------------------------------------------
+
+    details = {}
+    vacancies = []
+    important_dates = {}
+
+
+    for table in soup.find_all(
+        "table"
+    ):
+
+        heading = (
+            heading_for_table(
+                table
+            )
+            .lower()
+        )
+
+        rows = extract_key_value_table(
+            table
+        )
+
+
+        if not rows:
+            continue
+
+
+        if any(
+            word in heading
+            for word in (
+                "important date",
+                "important dates",
+            )
+        ):
+
+            for row in rows:
+
+                important_dates[
+                    row[0]
+                ] = " | ".join(
+                    row[1:]
+                )
+
+
+        elif any(
+            word in heading
+            for word in (
+                "vacancy",
+                "post details",
+                "post name",
+            )
+        ):
+
             header = rows[0]
+
             for row in rows[1:]:
-                if len(row) == len(header): vacancies.append(dict(zip(header, row)))
-        elif any(w in heading for w in ("application fee", "eligibility", "age limit", "selection process")):
-            details[heading_for_table(table)] = rows
+
+                if len(row) == len(header):
+
+                    vacancies.append(
+                        dict(
+                            zip(
+                                header,
+                                row
+                            )
+                        )
+                    )
+
+
+        elif any(
+            word in heading
+            for word in (
+                "application fee",
+                "eligibility",
+                "age limit",
+                "selection process",
+            )
+        ):
+
+            details[
+                heading_for_table(
+                    table
+                )
+            ] = rows
+
+
     return {
-        "official_url": official_url, "pdf_url": pdf_url, "apply_url": apply_url,
-        "official_website_url": official_website_url, "important_dates": important_dates,
-        "vacancy_details": vacancies, "notification_details": details,
-        "eligibility": extract_section_text(soup, ["qualification", "eligibility"]),
-        "age_limit": extract_section_text(soup, ["age limit"]),
-        "application_fee": extract_section_text(soup, ["application fee", "exam fee"]),
-        "selection_process": extract_section_text(soup, ["selection process", "selection procedure"]),
-        "how_to_apply": extract_section_text(soup, ["how to apply", "apply online"]),
+
+        "official_url":
+            official_url,
+
+        "pdf_url":
+            pdf_url,
+
+        "apply_url":
+            apply_url,
+
+        "official_website_url":
+            official_website_url,
+
+        "important_dates":
+            important_dates,
+
+        "vacancy_details":
+            vacancies,
+
+        "notification_details":
+            details,
+
+        "eligibility":
+            extract_section_text(
+                soup,
+                [
+                    "qualification",
+                    "eligibility",
+                ]
+            ),
+
+        "age_limit":
+            extract_section_text(
+                soup,
+                [
+                    "age limit",
+                ]
+            ),
+
+        "application_fee":
+            extract_section_text(
+                soup,
+                [
+                    "application fee",
+                    "exam fee",
+                ]
+            ),
+
+        "selection_process":
+            extract_section_text(
+                soup,
+                [
+                    "selection process",
+                    "selection procedure",
+                ]
+            ),
+
+        "how_to_apply":
+            extract_section_text(
+                soup,
+                [
+                    "how to apply",
+                    "apply online",
+                ]
+            ),
     }
 
 
+# ============================================================
+# REPAIR EXISTING RECORDS
+# ============================================================
+
 def repair_existing_records():
-    """Repair old rows by treating their current FreeJobAlert official_url as the article URL."""
+
+    """
+    Repair existing FreeJobAlert records.
+
+    The 9 known records are manually protected by db.py.
+    Any remaining FreeJobAlert records are also checked
+    automatically.
+    """
+
     records = get_freejobalert_records()
-    print(f"[repair] found {len(records)} existing FreeJobAlert records")
+
+    print(
+        f"[repair] found "
+        f"{len(records)} existing "
+        f"FreeJobAlert records"
+    )
+
+
     repaired = 0
+
+
     for record in records:
-        record_id, article_url = record.get("id"), record.get("official_url")
-        title = clean(record.get("title"))
-        if not record_id or not is_freejobalert_url(article_url): continue
+
+        record_id = record.get(
+            "id"
+        )
+
+        article_url = record.get(
+            "official_url"
+        )
+
+        title = clean(
+            record.get("title")
+        )
+
+
+        if not record_id:
+            continue
+
+
+        if not is_freejobalert_url(
+            article_url
+        ):
+            continue
+
+
+        # ----------------------------------------------------
+        # First check our 9 manually verified URLs.
+        # ----------------------------------------------------
+
+        if record_id in MANUAL_OFFICIAL_URLS:
+
+            manual_url = (
+                MANUAL_OFFICIAL_URLS[
+                    record_id
+                ]
+            )
+
+
+            update_official_url(
+                record_id,
+                manual_url
+            )
+
+
+            repaired += 1
+
+
+            print(
+                f"[repair:manual] {title}"
+            )
+
+            print(
+                f"  OLD: {article_url}"
+            )
+
+            print(
+                f"  NEW: {manual_url}"
+            )
+
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Automatic extraction for other old records.
+        # ----------------------------------------------------
+
         try:
-            extracted = extract_structured_content(article_url, title)
-            new_url = extracted.get("official_url")
-            if new_url and not is_freejobalert_url(new_url):
-                update_official_url(record_id, new_url)
+
+            extracted = (
+                extract_structured_content(
+                    article_url,
+                    title
+                )
+            )
+
+
+            new_url = extracted.get(
+                "official_url"
+            )
+
+
+            if (
+                new_url
+                and not is_freejobalert_url(
+                    new_url
+                )
+            ):
+
+                update_official_url(
+                    record_id,
+                    new_url
+                )
+
+
                 repaired += 1
-                print(f"[repair:fixed] {title}\n  OLD: {article_url}\n  NEW: {new_url}")
+
+
+                print(
+                    f"[repair:fixed] {title}"
+                )
+
+                print(
+                    f"  OLD: {article_url}"
+                )
+
+                print(
+                    f"  NEW: {new_url}"
+                )
+
             else:
-                print(f"[repair:skipped] no verified official URL: {title}")
+
+                print(
+                    "[repair:skipped] "
+                    f"no verified official URL: "
+                    f"{title}"
+                )
+
+
         except Exception as exc:
-            print(f"[repair:error] {title}: {exc}")
+
+            print(
+                f"[repair:error] "
+                f"{title}: {exc}"
+            )
+
+
         time.sleep(0.5)
-    print(f"[repair] completed: {repaired}/{len(records)} repaired")
 
 
-def make_description(title, department):
-    return f"Get complete recruitment information for {title}, including important dates, vacancy details, eligibility and official links from {department}. Always read the official notification before applying."
+    print(
+        f"[repair] completed: "
+        f"{repaired}/{len(records)} repaired"
+    )
 
+
+# ============================================================
+# DESCRIPTION
+# ============================================================
+
+def make_description(
+    title,
+    department
+):
+
+    return (
+        f"Get complete recruitment information "
+        f"for {title}, including important dates, "
+        f"vacancy details, eligibility and official "
+        f"links from {department}. Always read the "
+        f"official notification before applying."
+    )
+
+
+# ============================================================
+# FETCH NOTICES
+# ============================================================
 
 def fetch_notices():
-    html = fetch_html(LISTING_URL, HEADERS)
-    soup = BeautifulSoup(html, "html.parser")
-    notices, seen_urls = [], set()
-    for table in soup.find_all("table"):
-        heading = heading_for_table(table)
-        if "uttarakhand" not in heading.lower(): continue
-        table_category = category_from_heading(heading)
-        for row in table.find_all("tr"):
-            if not row.find_all("td"): continue
-            link_tag = row.find("a", href=True)
-            if not link_tag: continue
-            title = clean(link_tag.get_text(" ", strip=True))
-            detail_url = urljoin(LISTING_URL, link_tag["href"].strip())
-            if not title or len(title) < 8 or detail_url in seen_urls: continue
-            seen_urls.add(detail_url)
-            try: extracted = extract_structured_content(detail_url, title)
+
+    html = fetch_html(
+        LISTING_URL,
+        HEADERS
+    )
+
+
+    soup = BeautifulSoup(
+        html,
+        "html.parser"
+    )
+
+
+    notices = []
+    seen_urls = set()
+
+
+    for table in soup.find_all(
+        "table"
+    ):
+
+        heading = heading_for_table(
+            table
+        )
+
+
+        if (
+            "uttarakhand"
+            not in heading.lower()
+        ):
+            continue
+
+
+        table_category = (
+            category_from_heading(
+                heading
+            )
+        )
+
+
+        for row in table.find_all(
+            "tr"
+        ):
+
+            if not row.find_all(
+                "td"
+            ):
+                continue
+
+
+            link_tag = row.find(
+                "a",
+                href=True
+            )
+
+
+            if not link_tag:
+                continue
+
+
+            title = clean(
+                link_tag.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            detail_url = urljoin(
+                LISTING_URL,
+                link_tag["href"].strip()
+            )
+
+
+            if (
+                not title
+                or len(title) < 8
+                or detail_url in seen_urls
+            ):
+                continue
+
+
+            seen_urls.add(
+                detail_url
+            )
+
+
+            try:
+
+                extracted = (
+                    extract_structured_content(
+                        detail_url,
+                        title
+                    )
+                )
+
+
             except Exception as exc:
-                print(f"[skip] extraction failed for {title}: {exc}"); continue
-            if not extracted["official_url"]:
-                print(f"[skip] no verified official link found: {title}"); continue
-            row_text = clean(row.get_text(" ", strip=True))
-            date_match = DATE_CELL_PATTERN.search(row_text)
-            department = guess_department(title)
+
+                print(
+                    f"[skip] extraction failed "
+                    f"for {title}: {exc}"
+                )
+
+                continue
+
+
+            if not extracted[
+                "official_url"
+            ]:
+
+                print(
+                    "[skip] no verified official "
+                    f"link found: {title}"
+                )
+
+                continue
+
+
+            row_text = clean(
+                row.get_text(
+                    " ",
+                    strip=True
+                )
+            )
+
+
+            date_match = (
+                DATE_CELL_PATTERN.search(
+                    row_text
+                )
+            )
+
+
+            department = guess_department(
+                title
+            )
+
+
             notices.append({
-                "title": title, "department": department, "category": table_category or classify(title),
-                "description": make_description(title, department),
-                "published_date": parse_date(date_match.group(0)) if date_match else None,
-                "source_url": detail_url, "official_url": extracted["official_url"],
-                "pdf_url": extracted["pdf_url"], "apply_url": extracted["apply_url"],
-                "official_website_url": extracted["official_website_url"],
-                "important_dates": extracted["important_dates"], "vacancy_details": extracted["vacancy_details"],
-                "notification_details": extracted["notification_details"], "eligibility": extracted["eligibility"],
-                "age_limit": extracted["age_limit"], "application_fee": extracted["application_fee"],
-                "selection_process": extracted["selection_process"], "how_to_apply": extracted["how_to_apply"],
-                "meta_description": make_description(title, department)[:155],
+
+                "title":
+                    title,
+
+                "department":
+                    department,
+
+                "category":
+                    table_category
+                    or classify(title),
+
+                "description":
+                    make_description(
+                        title,
+                        department
+                    ),
+
+                "published_date":
+                    parse_date(
+                        date_match.group(0)
+                    )
+                    if date_match
+                    else None,
+
+                "source_url":
+                    detail_url,
+
+                "official_url":
+                    extracted[
+                        "official_url"
+                    ],
+
+                "pdf_url":
+                    extracted[
+                        "pdf_url"
+                    ],
+
+                "apply_url":
+                    extracted[
+                        "apply_url"
+                    ],
+
+                "official_website_url":
+                    extracted[
+                        "official_website_url"
+                    ],
+
+                "important_dates":
+                    extracted[
+                        "important_dates"
+                    ],
+
+                "vacancy_details":
+                    extracted[
+                        "vacancy_details"
+                    ],
+
+                "notification_details":
+                    extracted[
+                        "notification_details"
+                    ],
+
+                "eligibility":
+                    extracted[
+                        "eligibility"
+                    ],
+
+                "age_limit":
+                    extracted[
+                        "age_limit"
+                    ],
+
+                "application_fee":
+                    extracted[
+                        "application_fee"
+                    ],
+
+                "selection_process":
+                    extracted[
+                        "selection_process"
+                    ],
+
+                "how_to_apply":
+                    extracted[
+                        "how_to_apply"
+                    ],
+
+                "meta_description":
+                    make_description(
+                        title,
+                        department
+                    )[:155],
             })
+
+
             time.sleep(0.5)
+
+
     return notices
 
 
+# ============================================================
+# MAIN RUN
+# ============================================================
+
 def run():
+
+    print(
+        "=================================================="
+    )
+
+    print(
+        "FreeJobAlert collector starting"
+    )
+
+    print(
+        "=================================================="
+    )
+
+
+    # --------------------------------------------------------
+    # STEP 1:
+    # Repair existing FreeJobAlert records first.
+    # --------------------------------------------------------
+
     repair_existing_records()
+
+
+    # --------------------------------------------------------
+    # STEP 2:
+    # Fetch new jobs.
+    # --------------------------------------------------------
+
     notices = fetch_notices()
-    print(f"[FreeJobAlert] fetched {len(notices)} notices with verified official links")
-    for notice in notices: save_update(notice)
 
 
-if __name__ == "__main__": run()
+    print(
+        f"[FreeJobAlert] fetched "
+        f"{len(notices)} notices "
+        f"with verified official links"
+    )
+
+
+    # --------------------------------------------------------
+    # STEP 3:
+    # Save new/update existing jobs.
+    # --------------------------------------------------------
+
+    for notice in notices:
+
+        save_update(
+            notice
+        )
+
+
+    print(
+        "=================================================="
+    )
+
+    print(
+        "FreeJobAlert collector completed"
+    )
+
+    print(
+        "=================================================="
+    )
+
+
+# ============================================================
+# DIRECT EXECUTION
+# ============================================================
+
+if __name__ == "__main__":
+
+    run()
