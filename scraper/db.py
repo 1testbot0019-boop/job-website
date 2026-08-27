@@ -10,7 +10,6 @@ SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 _client: Client | None = None
 
-# Columns that actually exist in public.updates.
 UPDATES_COLUMNS = {
     "id", "title", "slug", "category", "department", "description",
     "important_dates", "published_date", "source_url", "official_url",
@@ -39,7 +38,6 @@ def make_slug(title: str, department: str) -> str:
 
 
 def make_hash(title: str, source_url: str) -> str:
-    """Use the source detail page as the stable identity across official-link changes."""
     return hashlib.sha256(f"{title.strip()}|{source_url.strip()}".encode()).hexdigest()
 
 
@@ -56,48 +54,44 @@ def get_freejobalert_records() -> list[dict]:
 
 
 def update_official_url(record_id: str, official_url: str) -> None:
-    """Update the official destination fields for an existing record."""
+    """Update verified official destination fields for an existing record."""
     client = get_client()
-    client.table("updates").update({
+    payload = {
         "official_url": official_url,
         "official_notification_url": official_url,
-        "pdf_url": official_url if official_url.lower().split("?")[0].endswith(".pdf") else None,
-    }).eq("id", record_id).execute()
+    }
+    if official_url.lower().split("?")[0].endswith(".pdf"):
+        payload["pdf_url"] = official_url
+    client.table("updates").update(payload).eq("id", record_id).execute()
 
 
 def _prepare_record(record: dict) -> dict:
-    """Map collector field names to the real Supabase schema and drop unknown fields."""
+    """Map collector fields to the real Supabase schema and drop unknown fields."""
     record = dict(record)
 
-    # Collector's generic apply_url maps to the existing DB column.
     if record.get("apply_url") and not record.get("apply_online_url"):
         record["apply_online_url"] = record["apply_url"]
 
-    # The primary official destination is also the notification destination.
     if record.get("official_url") and not record.get("official_notification_url"):
         record["official_notification_url"] = record["official_url"]
 
-    # Collector calls this eligibility; the DB calls it qualification.
     if record.get("eligibility") and not record.get("qualification"):
         record["qualification"] = record["eligibility"]
 
-    # application_fee is jsonb in Supabase, so wrap plain text safely.
     fee = record.get("application_fee")
     if fee is not None and not isinstance(fee, (dict, list)):
         record["application_fee"] = {"text": str(fee)}
 
-    # These are collector-only fields and are not columns in updates.
     record.pop("apply_url", None)
     record.pop("eligibility", None)
     record.pop("notification_details", None)
     record.pop("meta_description", None)
 
-    # Never send fields that do not exist in the actual table.
     return {key: value for key, value in record.items() if key in UPDATES_COLUMNS}
 
 
 def save_update(record: dict) -> None:
-    """Insert a new notice or update an existing notice with fresher official links."""
+    """Insert a notice or update it without overwriting a verified official URL."""
     client = get_client()
     record = _prepare_record(record)
     record["slug"] = make_slug(record["title"], record["department"])
@@ -105,14 +99,29 @@ def save_update(record: dict) -> None:
 
     existing = (
         client.table("updates")
-        .select("id")
+        .select("id,official_url,official_notification_url,pdf_url")
         .eq("content_hash", record["content_hash"])
         .limit(1)
         .execute()
     )
 
     if existing.data:
-        client.table("updates").update(record).eq("id", existing.data[0]["id"]).execute()
+        old = existing.data[0]
+        old_official = old.get("official_url") or ""
+        old_notification = old.get("official_notification_url") or ""
+        incoming_official = record.get("official_url") or ""
+
+        # Never replace a previously verified official destination with a
+        # FreeJobAlert URL during the normal scrape after the repair pass.
+        if old_official and "freejobalert.com" not in old_official.lower():
+            if "freejobalert.com" in incoming_official.lower():
+                record.pop("official_url", None)
+            if old_notification and "freejobalert.com" not in old_notification.lower():
+                record.pop("official_notification_url", None)
+            if old.get("pdf_url") and "freejobalert.com" in (record.get("pdf_url") or "").lower():
+                record.pop("pdf_url", None)
+
+        client.table("updates").update(record).eq("id", old["id"]).execute()
         print(f"[updated] {record['department']} :: {record['title']}")
         return
 
