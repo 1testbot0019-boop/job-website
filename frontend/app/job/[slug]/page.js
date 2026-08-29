@@ -73,17 +73,10 @@ function LinkButton({ href, children, primary = false }) {
   );
 }
 
-/*
- * The scraper stores the verified government/organisation notification
- * in official_url. Older/newer records may also have the more explicit
- * official_notification_url field. IMPORTANT: a PDF is a valid official
- * notification, so it MUST NOT be rejected for the main notification button.
- */
 function getOfficialNotificationUrl(update) {
   const candidates = [
     update?.official_notification_url,
     update?.official_url,
-    update?.official_website_url,
   ];
 
   return (
@@ -130,12 +123,15 @@ export default async function NoticeDetailPage({ params }) {
   const pdfUrl = getPdfUrl(update);
   const applyUrl = typeof update.apply_online_url === "string"
     ? update.apply_online_url.trim()
-    : typeof update.apply_url === "string"
-      ? update.apply_url.trim()
-      : "";
+    : "";
   const officialWebsiteUrl = typeof update.official_website_url === "string"
     ? update.official_website_url.trim()
     : "";
+
+  // The primary action is now the direct official application portal whenever
+  // the scraper has found one. The notification PDF remains a separate link.
+  const primaryUrl = applyUrl || officialNotificationUrl;
+  const primaryLabel = applyUrl ? "Apply Online" : "Visit Official Notification";
 
   return (
     <article className="max-w-4xl pb-10">
@@ -150,11 +146,13 @@ export default async function NoticeDetailPage({ params }) {
       <p className="text-ink/65 text-lg mb-8">{description}</p>
 
       <div className="border border-stone bg-white/60 p-5 mb-10 flex flex-wrap gap-3">
-        <LinkButton href={officialNotificationUrl} primary>
-          Visit Official Notification
+        <LinkButton href={primaryUrl} primary>
+          {primaryLabel}
         </LinkButton>
 
-        <LinkButton href={applyUrl}>Apply Online</LinkButton>
+        {applyUrl && (
+          <LinkButton href={officialNotificationUrl}>Official Notification</LinkButton>
+        )}
 
         <LinkButton href={pdfUrl}>Download Official PDF</LinkButton>
 
@@ -263,7 +261,7 @@ export default async function NoticeDetailPage({ params }) {
           <p className="leading-8 whitespace-pre-line">{safeText(update.how_to_apply)}</p>
         ) : (
           <ol className="list-decimal pl-6 space-y-2 leading-8">
-            <li>Open the official notification using the button above.</li>
+            <li>Open the official application portal using the Apply Online button above, when available.</li>
             <li>Read eligibility, vacancy and date information carefully.</li>
             <li>Use only the official application portal for submission.</li>
             <li>Keep your application number and a copy of the submitted form.</li>
@@ -273,8 +271,8 @@ export default async function NoticeDetailPage({ params }) {
 
       <Section title="Important Links">
         <div className="flex flex-wrap gap-3">
-          <LinkButton href={officialNotificationUrl} primary>Official Notification</LinkButton>
-          <LinkButton href={applyUrl}>Apply Online</LinkButton>
+          <LinkButton href={applyUrl} primary>Apply Online</LinkButton>
+          <LinkButton href={officialNotificationUrl}>Official Notification</LinkButton>
           <LinkButton href={pdfUrl}>Notification PDF</LinkButton>
           <LinkButton href={officialWebsiteUrl}>Official Website</LinkButton>
         </div>
