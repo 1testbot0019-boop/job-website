@@ -13,7 +13,7 @@ export default function Footer() {
           notification before applying.
         </p>
         <p className="font-mono text-xs text-paper/60">
-          Not an official government website.
+          All Rights Reserved @2026.
         </p>
       </div>
     </footer>
