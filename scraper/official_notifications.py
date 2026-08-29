@@ -38,12 +38,11 @@ def relevant(title):
     return any(keyword in text for keyword in KEYWORDS)
 
 
-def make_slug_source(source_name, title, url):
-    return url
-
-
 def extract_date(text):
-    match = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b", text or "")
+    match = re.search(
+        r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{4}|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\b",
+        text or "",
+    )
     if not match:
         return None
     try:
@@ -79,7 +78,9 @@ def collect_source(source_code, department, source_url):
                 "Use the official source link to read or download the notice."
             ),
             "published_date": published_date,
-            "source_url": source_url,
+            # Use the individual item URL as source_url so each notice is a
+            # separate database record rather than colliding on the listing URL.
+            "source_url": href,
             "official_url": href,
             "pdf_url": href if href.lower().split("?")[0].endswith(".pdf") else None,
             "official_notification_url": href,
@@ -95,7 +96,6 @@ def run():
     for source_code, department, source_url in SOURCES:
         try:
             records = collect_source(source_code, department, source_url)
-            # Keep the most recent/current source-page entries manageable.
             for record in records[:40]:
                 save_update(record)
                 total += 1
