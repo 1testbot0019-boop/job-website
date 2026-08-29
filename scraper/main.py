@@ -4,12 +4,15 @@ import traceback
 
 import all_india
 import freejobalert
+import official_notifications
 import enrich_apply_links
 import repair_broken_links
 
-# FreeJobAlert continues to collect Uttarakhand-specific notices and repair
-# existing records. all_india adds the other Indian states and UTs.
-COLLECTORS = [freejobalert, all_india]
+# FreeJobAlert continues to collect Uttarakhand-specific jobs and repair
+# existing records. The official-notifications collector separately pulls
+# general notices, circulars, corrigendums and similar updates directly from
+# official UKPSC and UKSSSC pages.
+COLLECTORS = [freejobalert, all_india, official_notifications]
 
 
 def main():
@@ -21,7 +24,7 @@ def main():
             print(f"[error] {name} failed: {exc}")
             traceback.print_exc()
 
-    # Run after both collectors so existing and newly scraped records get a
+    # Run after all collectors so existing and newly scraped records get a
     # direct application-portal URL whenever the source page exposes one.
     try:
         enrich_apply_links.run()
