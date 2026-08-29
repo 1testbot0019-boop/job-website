@@ -70,7 +70,7 @@ export default async function CategoryList({
         </p>
       ) : (
         <div className="mb-4 text-sm text-ink/60">
-          Showing {updates.length} {state ? `${state} ` : ""}job
+          Showing {updates.length} {state ? `${state} ` : ""}update
           {updates.length === 1 ? "" : "s"}
         </div>
       )}
