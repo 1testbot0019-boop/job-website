@@ -1,10 +1,16 @@
-name: Run Uttarakhand Jobs Scraper
+name: Run All India Jobs Scraper
 
 on:
   schedule:
-    # Every 3 hours. GitHub Actions cron is UTC; adjust as you like.
-    - cron: "0 */3 * * *"
+    # Every 3 hours. GitHub Actions cron is UTC.
+    - cron: "17 */3 * * *"
   workflow_dispatch: {}
+  push:
+    branches:
+      - main
+    paths:
+      - "scraper/**"
+      - ".github/workflows/scraper.yml"
 
 jobs:
   scrape:
@@ -27,15 +33,17 @@ jobs:
       - name: Verify Supabase configuration
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -e
           if [ -z "$SUPABASE_URL" ]; then
             echo "ERROR: GitHub Actions secret SUPABASE_URL is missing or empty."
             exit 1
           fi
-          if [ -z "$SUPABASE_KEY" ]; then
-            echo "ERROR: GitHub Actions secret SUPABASE_KEY is missing or empty."
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "ERROR: GitHub Actions secret SUPABASE_SERVICE_ROLE_KEY is missing or empty."
+            echo "The scraper writes to public.updates and RLS correctly blocks the anon key."
+            echo "Add the Supabase service_role key as SUPABASE_SERVICE_ROLE_KEY in GitHub repository secrets."
             exit 1
           fi
 
@@ -48,10 +56,10 @@ jobs:
           esac
 
           echo "OK: SUPABASE_URL is present."
-          echo "OK: SUPABASE_KEY is present (value hidden)."
+          echo "OK: SUPABASE_SERVICE_ROLE_KEY is present (value hidden)."
 
       - name: Run collectors
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: python main.py
