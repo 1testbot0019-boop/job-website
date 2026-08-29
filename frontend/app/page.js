@@ -78,8 +78,8 @@ export default async function HomePage() {
   return (
     <div className="portal-page">
       <section className="welcome-panel">
-        <h1>Uttarakhand Government Jobs, Results &amp; Admit Card</h1>
-        <p>Latest official updates for UKPSC, UKSSSC, Uttarakhand Police and other government departments.</p>
+        <h1>Government Jobs, Results &amp; Admit Card</h1>
+        <p>Latest official updates for government jobs, results, admit cards and notifications across India.</p>
       </section>
 
       <section className="quick-grid" aria-label="Quick links">
