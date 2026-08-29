@@ -1,11 +1,11 @@
 import Link from "next/link";
-import SkylineDivider from "./SkylineDivider";
 
 const NAV = [
-  { href: "/jobs", label: "Jobs" },
+  { href: "/", label: "Home" },
+  { href: "/jobs", label: "Latest Jobs" },
   { href: "/results", label: "Results" },
-  { href: "/admit-card", label: "Admit Cards" },
-  { href: "/answer-key", label: "Answer Keys" },
+  { href: "/admit-card", label: "Admit Card" },
+  { href: "/answer-key", label: "Answer Key" },
   { href: "/notification", label: "Notifications" },
   { href: "/syllabus", label: "Syllabus" },
   { href: "/search", label: "Search" },
@@ -13,25 +13,33 @@ const NAV = [
 
 export default function Header() {
   return (
-    <header className="bg-ridge text-paper">
-      <div className="max-w-4xl mx-auto px-5 py-6 flex items-center justify-between gap-4">
-        <Link href="/" className="font-display text-2xl tracking-tight">
-          Uttarakhand Rojgar
-          <span className="block font-mono text-[11px] tracking-widest uppercase text-marigold mt-1">
-            Jobs · Results · Admit Cards
-          </span>
-        </Link>
-      </div>
-      <nav className="max-w-4xl mx-auto px-5 pb-4 flex flex-wrap gap-x-5 gap-y-1 font-body text-sm">
-        {NAV.map((item) => (
-          <Link key={item.href} href={item.href} className="hover:text-marigold transition-colors">
-            {item.label}
+    <header className="site-header">
+      <div className="top-strip">
+        <div className="site-shell header-main">
+          <Link href="/" className="brand">
+            <span className="brand-mark">UK</span>
+            <span>
+              <strong>Uttarakhand Rojgar</strong>
+              <small>Government Jobs • Results • Admit Cards</small>
+            </span>
           </Link>
-        ))}
-      </nav>
-      <div className="text-ridge">
-        <SkylineDivider />
+
+          <div className="header-note">
+            <span>🇮🇳</span>
+            <span>Latest Government Updates</span>
+          </div>
+        </div>
       </div>
+
+      <nav className="nav-bar">
+        <div className="site-shell nav-inner">
+          {NAV.map((item) => (
+            <Link key={item.href} href={item.href} className="nav-link">
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      </nav>
     </header>
   );
 }
