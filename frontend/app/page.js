@@ -1,46 +1,122 @@
+import Link from "next/link";
 import { getUpdates } from "../lib/queries";
-import NoticeCard from "../components/NoticeCard";
 
-export const revalidate = 3600; // re-fetch at most once an hour
+export const revalidate = 3600;
 
-export default async function HomePage() {
-  const updates = await getUpdates({ limit: 30 });
+const QUICK_LINKS = [
+  { href: "/jobs", label: "Latest Government Jobs", tone: "red" },
+  { href: "/results", label: "Latest Results", tone: "green" },
+  { href: "/admit-card", label: "Admit Card", tone: "orange" },
+  { href: "/answer-key", label: "Answer Key", tone: "blue" },
+  { href: "/notification", label: "Government Notifications", tone: "purple" },
+  { href: "/syllabus", label: "Syllabus", tone: "teal" },
+  { href: "/jobs", label: "Uttarakhand Jobs", tone: "indigo" },
+  { href: "/search", label: "Search Jobs & Results", tone: "pink" },
+];
 
+const SECTIONS = [
+  { key: "JOB", title: "Latest Jobs", href: "/jobs" },
+  { key: "ADMIT_CARD", title: "Admit Card", href: "/admit-card" },
+  { key: "RESULT", title: "Latest Results", href: "/results" },
+];
+
+function safeText(value, fallback = "") {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (Array.isArray(value)) return value.map((item) => safeText(item)).filter(Boolean).join(", ") || fallback;
+  if (typeof value === "object") return Object.values(value).map((item) => safeText(item)).filter(Boolean).join(", ") || fallback;
+  return fallback;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr || typeof dateStr === "object") return "";
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function UpdateList({ title, href, items }) {
   return (
-    <>
-      <section className="mb-10">
-        <p className="font-mono text-xs uppercase tracking-widest text-marigold mb-2">
-          Updated automatically, every few hours
-        </p>
-        <h1 className="font-display text-3xl md:text-4xl text-ridge leading-tight max-w-2xl">
-          Every official Uttarakhand government job, result and admit card, in one place.
-        </h1>
-      </section>
-
-      <section>
-        <h2 className="font-display text-xl text-ridge mb-4 pb-2 border-b border-stone">
-          Latest updates
-        </h2>
-
-        {updates.length === 0 ? (
-          <EmptyState />
+    <section className="portal-column">
+      <div className="column-title">
+        <span>{title}</span>
+        <Link href={href}>View All »</Link>
+      </div>
+      <div className="column-body">
+        {items.length === 0 ? (
+          <p className="empty-column">No updates available yet.</p>
         ) : (
-          <div className="flex flex-col gap-3">
-            {updates.map((u) => (
-              <NoticeCard key={u.id} update={u} />
-            ))}
-          </div>
+          items.map((item) => {
+            const titleText = safeText(item?.title, "Untitled Update");
+            const slug = safeText(item?.slug, "");
+            return (
+              <article key={item.id} className="portal-item">
+                {slug ? (
+                  <Link href={`/job/${slug}`} className="item-link">{titleText}</Link>
+                ) : (
+                  <span className="item-link">{titleText}</span>
+                )}
+                {item?.published_date && <time>{formatDate(item.published_date)}</time>}
+              </article>
+            );
+          })
         )}
-      </section>
-    </>
+      </div>
+    </section>
   );
 }
 
-function EmptyState() {
+export default async function HomePage() {
+  const updates = await getUpdates({ limit: 60 });
+
+  const byCategory = (category) => updates.filter((item) => safeText(item?.category).toUpperCase() === category).slice(0, 8);
+  const latestJobs = byCategory("JOB");
+  const latestAdmitCards = byCategory("ADMIT_CARD");
+  const latestResults = byCategory("RESULT");
+
   return (
-    <p className="font-body text-sm text-ink/70 border border-dashed border-stone p-6">
-      No updates have been collected yet. Once the scraper runs and your
-      Supabase table has rows, they will appear here automatically.
-    </p>
+    <div className="portal-page">
+      <section className="welcome-panel">
+        <h1>Uttarakhand Government Jobs, Results &amp; Admit Card</h1>
+        <p>Latest official updates for UKPSC, UKSSSC, Uttarakhand Police and other government departments.</p>
+      </section>
+
+      <section className="quick-grid" aria-label="Quick links">
+        {QUICK_LINKS.map((item) => (
+          <Link key={item.href + item.label} href={item.href} className={`quick-card ${item.tone}`}>
+            {item.label}
+          </Link>
+        ))}
+      </section>
+
+      <section className="notice-bar">
+        <strong>Latest Update:</strong>
+        <span>Government job vacancies, results and admit cards are updated automatically.</span>
+      </section>
+
+      <section className="three-columns">
+        <UpdateList title="Latest Job" href={SECTIONS[0].href} items={latestJobs} />
+        <UpdateList title="Admit Card" href={SECTIONS[1].href} items={latestAdmitCards} />
+        <UpdateList title="Latest Results" href={SECTIONS[2].href} items={latestResults} />
+      </section>
+
+      <section className="category-grid">
+        <CategoryBox title="Uttarakhand Government Jobs" href="/jobs" text="Find the latest vacancies, eligibility, important dates and official notifications." />
+        <CategoryBox title="Results" href="/results" text="Check recently released examination and recruitment results." />
+        <CategoryBox title="Admit Card" href="/admit-card" text="Download hall tickets and check examination dates." />
+        <CategoryBox title="Answer Key" href="/answer-key" text="Find official answer keys and related updates." />
+      </section>
+    </div>
+  );
+}
+
+function CategoryBox({ title, href, text }) {
+  return (
+    <section className="category-box">
+      <h2><Link href={href}>{title}</Link></h2>
+      <p>{text}</p>
+      <Link href={href} className="category-more">Read More »</Link>
+    </section>
   );
 }
