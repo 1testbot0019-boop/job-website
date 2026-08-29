@@ -1,7 +1,7 @@
 import { supabase } from "./supabase";
 
-/** Latest N updates, optionally filtered by category. */
-export async function getUpdates({ category = null, limit = 30 } = {}) {
+/** Latest N updates, optionally filtered by category and state. */
+export async function getUpdates({ category = null, limit = 30, state = null } = {}) {
   let query = supabase
     .from("updates")
     .select("*")
@@ -12,6 +12,12 @@ export async function getUpdates({ category = null, limit = 30 } = {}) {
 
   if (category) {
     query = query.eq("category", category);
+  }
+
+  // All-India scraper stores departments as "<State> Govt".
+  // Existing Uttarakhand jobs use the same format, so no database migration is needed.
+  if (state) {
+    query = query.eq("department", `${state} Govt`);
   }
 
   const { data, error } = await query;
