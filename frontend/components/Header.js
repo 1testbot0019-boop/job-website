@@ -19,7 +19,7 @@ export default function Header() {
           <Link href="/" className="brand">
             <span className="brand-mark">UK</span>
             <span>
-              <strong>Uttarakhand Rojgar</strong>
+              <strong> Govt. Jobs india </strong>
               <small>Government Jobs • Results • Admit Cards</small>
             </span>
           </Link>
