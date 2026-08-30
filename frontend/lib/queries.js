@@ -10,15 +10,8 @@ export async function getUpdates({ category = null, limit = 30, state = null } =
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  if (category) {
-    query = query.eq("category", category);
-  }
-
-  // All-India scraper stores departments as "<State> Govt".
-  // Existing Uttarakhand jobs use the same format, so no database migration is needed.
-  if (state) {
-    query = query.eq("department", `${state} Govt`);
-  }
+  if (category) query = query.eq("category", category);
+  if (state) query = query.eq("department", `${state} Govt`);
 
   const { data, error } = await query;
   if (error) {
@@ -41,6 +34,24 @@ export async function getUpdateBySlug(slug) {
     return null;
   }
   return data;
+}
+
+/** Latest active updates for the right-side navigation and recommendations. */
+export async function getRecommendedUpdates(currentSlug, limit = 12) {
+  const { data, error } = await supabase
+    .from("updates")
+    .select("id,title,slug,category,department,published_date,created_at")
+    .eq("is_active", true)
+    .neq("slug", currentSlug)
+    .order("published_date", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("getRecommendedUpdates error:", error.message);
+    return [];
+  }
+  return data ?? [];
 }
 
 /** Full-text search across title + description. */
