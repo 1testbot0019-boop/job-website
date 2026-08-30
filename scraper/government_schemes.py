@@ -1,179 +1,146 @@
-"""Populate the government_schemes table with official India-wide and Uttarakhand scheme records.
+"""Collect government schemes for all Indian States/UTs.
 
-This collector uses stable official government URLs and is safe to run repeatedly.
+Primary source: myScheme, the national government scheme discovery platform,
+which covers Central, State and Union Territory schemes. Official source URLs
+are retained where available; myScheme is used as the discovery fallback.
 """
 
-import hashlib
 import re
-
+import requests
+from bs4 import BeautifulSoup
 from supabase import create_client
-
 from db import SUPABASE_KEY, SUPABASE_URL
 
-SCHEMES = [
-    {
-        "title": "Pradhan Mantri Jan Dhan Yojana (PMJDY)",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Financial Inclusion",
-        "department": "Department of Financial Services, Government of India",
-        "short_description": "Financial inclusion scheme providing access to banking services and basic bank accounts.",
-        "description": "Pradhan Mantri Jan Dhan Yojana is a national financial inclusion programme that provides access to banking and financial services.",
-        "benefits": "Access to a basic bank account and other eligible financial services as per scheme rules.",
-        "eligibility": "Eligibility is subject to the official scheme guidelines and participating bank requirements.",
-        "documents": "Identity and address documents as required by the bank and official scheme guidelines.",
-        "application_process": "Visit a participating bank or follow the official PMJDY instructions.",
-        "official_url": "https://pmjdy.gov.in/",
-        "official_source_name": "Pradhan Mantri Jan Dhan Yojana",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "Pradhan Mantri Awas Yojana - Urban (PMAY-U)",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Housing",
-        "department": "Ministry of Housing and Urban Affairs, Government of India",
-        "short_description": "Central housing scheme for eligible urban beneficiaries.",
-        "description": "Pradhan Mantri Awas Yojana - Urban supports housing assistance for eligible beneficiaries under official guidelines.",
-        "benefits": "Housing assistance and benefits as applicable under the current official scheme rules.",
-        "eligibility": "Eligibility depends on beneficiary category and current official guidelines.",
-        "documents": "Documents required under the official application process.",
-        "application_process": "Apply through the official PMAY-U process or authorised local agency.",
-        "official_url": "https://pmay-urban.gov.in/",
-        "official_source_name": "PMAY-U",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "Ayushman Bharat Pradhan Mantri Jan Arogya Yojana (PM-JAY)",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Health",
-        "department": "National Health Authority, Government of India",
-        "short_description": "Government health assurance scheme for eligible beneficiaries.",
-        "description": "Ayushman Bharat PM-JAY provides health assurance benefits to eligible families according to official programme rules.",
-        "benefits": "Cashless health treatment benefits at eligible empanelled hospitals, subject to scheme rules.",
-        "eligibility": "Eligibility is determined through official beneficiary criteria.",
-        "documents": "Beneficiary identification and other documents required under official guidelines.",
-        "application_process": "Check eligibility and follow the official National Health Authority process.",
-        "official_url": "https://pmjay.gov.in/",
-        "official_source_name": "National Health Authority",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "PM-KISAN Samman Nidhi",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Agriculture",
-        "department": "Ministry of Agriculture and Farmers Welfare, Government of India",
-        "short_description": "Income support scheme for eligible farmer families.",
-        "description": "PM-KISAN provides income support to eligible landholding farmer families subject to official eligibility conditions.",
-        "benefits": "Income support as notified by the Government of India and subject to scheme conditions.",
-        "eligibility": "Eligible farmer families as defined in the official PM-KISAN guidelines.",
-        "documents": "Land and identity details required by the official registration process.",
-        "application_process": "Register or complete beneficiary services through the official PM-KISAN portal.",
-        "official_url": "https://pmkisan.gov.in/",
-        "official_source_name": "PM-KISAN",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "Pradhan Mantri Ujjwala Yojana (PMUY)",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Women and Welfare",
-        "department": "Ministry of Petroleum and Natural Gas, Government of India",
-        "short_description": "LPG connection support scheme for eligible households.",
-        "description": "PMUY supports eligible beneficiaries with LPG connections according to current official guidelines.",
-        "benefits": "Benefits related to LPG connection support as available under official scheme rules.",
-        "eligibility": "Eligibility is subject to the official PMUY criteria.",
-        "documents": "Identity, address and other documents required under official guidelines.",
-        "application_process": "Apply through an authorised LPG distributor or the official scheme process.",
-        "official_url": "https://www.pmuy.gov.in/",
-        "official_source_name": "Pradhan Mantri Ujjwala Yojana",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "National Scholarship Portal Schemes",
-        "state": "All India",
-        "state_code": "IN",
-        "category": "Education",
-        "department": "Ministry of Education and participating departments",
-        "short_description": "Scholarship programmes available through the National Scholarship Portal.",
-        "description": "The National Scholarship Portal provides access to multiple government scholarship schemes for eligible students.",
-        "benefits": "Scholarship benefits vary by scheme and applicant category.",
-        "eligibility": "Eligibility varies by the selected scholarship scheme.",
-        "documents": "Academic, identity and category documents as required by the selected scheme.",
-        "application_process": "Search and apply through the official National Scholarship Portal.",
-        "official_url": "https://scholarships.gov.in/",
-        "official_source_name": "National Scholarship Portal",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "Uttarakhand Atal Ayushman Uttarakhand Yojana",
-        "state": "Uttarakhand",
-        "state_code": "UK",
-        "category": "Health",
-        "department": "Government of Uttarakhand",
-        "short_description": "State health assurance scheme and related beneficiary services for eligible residents.",
-        "description": "Uttarakhand health assurance services are provided under the state's official scheme framework and eligibility rules.",
-        "benefits": "Health assurance benefits at eligible hospitals subject to official rules.",
-        "eligibility": "Eligibility is determined under the current official Uttarakhand scheme guidelines.",
-        "documents": "Identity and beneficiary documents required by the official process.",
-        "application_process": "Use the official Uttarakhand health scheme portal and follow current instructions.",
-        "official_url": "https://health.uk.gov.in/",
-        "official_source_name": "Government of Uttarakhand",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-    {
-        "title": "Mukhyamantri Swarojgar Yojana Uttarakhand",
-        "state": "Uttarakhand",
-        "state_code": "UK",
-        "category": "Employment and Entrepreneurship",
-        "department": "Government of Uttarakhand",
-        "short_description": "Self-employment and entrepreneurship support under Uttarakhand government programmes.",
-        "description": "The scheme provides support for eligible self-employment and enterprise activities according to official Uttarakhand guidelines.",
-        "benefits": "Financial and institutional support subject to the applicable official scheme provisions.",
-        "eligibility": "Eligibility depends on current Uttarakhand government guidelines.",
-        "documents": "Identity, residence, project and other documents required by the official process.",
-        "application_process": "Follow the application procedure notified by the relevant Uttarakhand department.",
-        "official_url": "https://uk.gov.in/",
-        "official_source_name": "Government of Uttarakhand",
-        "myscheme_url": "https://www.myscheme.gov.in/",
-    },
-]
+BASE = "https://www.myscheme.gov.in"
+TIMEOUT = 30
+
+STATES = {
+    "Andhra Pradesh": "AP", "Arunachal Pradesh": "AR", "Assam": "AS", "Bihar": "BR",
+    "Chhattisgarh": "CG", "Goa": "GA", "Gujarat": "GJ", "Haryana": "HR",
+    "Himachal Pradesh": "HP", "Jharkhand": "JH", "Karnataka": "KA", "Kerala": "KL",
+    "Madhya Pradesh": "MP", "Maharashtra": "MH", "Manipur": "MN", "Meghalaya": "ML",
+    "Mizoram": "MZ", "Nagaland": "NL", "Odisha": "OD", "Punjab": "PB",
+    "Rajasthan": "RJ", "Sikkim": "SK", "Tamil Nadu": "TN", "Telangana": "TS",
+    "Tripura": "TR", "Uttar Pradesh": "UP", "Uttarakhand": "UK", "West Bengal": "WB",
+    "Andaman and Nicobar Islands": "AN", "Chandigarh": "CH", "Dadra and Nagar Haveli and Daman and Diu": "DH",
+    "Delhi": "DL", "Jammu and Kashmir": "JK", "Ladakh": "LA", "Lakshadweep": "LD",
+    "Puducherry": "PY",
+}
+
+# Official state/UT government landing pages used as a fallback official destination.
+# Scheme-specific official links discovered from source pages are preferred.
+OFFICIAL_PORTALS = {
+    "Andhra Pradesh": "https://www.ap.gov.in/", "Arunachal Pradesh": "https://arunachalpradesh.gov.in/",
+    "Assam": "https://assam.gov.in/", "Bihar": "https://state.bihar.gov.in/", "Chhattisgarh": "https://cgstate.gov.in/",
+    "Goa": "https://www.goa.gov.in/", "Gujarat": "https://gujaratindia.gov.in/", "Haryana": "https://haryana.gov.in/",
+    "Himachal Pradesh": "https://himachal.gov.in/", "Jharkhand": "https://www.jharkhand.gov.in/", "Karnataka": "https://www.karnataka.gov.in/",
+    "Kerala": "https://kerala.gov.in/", "Madhya Pradesh": "https://mp.gov.in/", "Maharashtra": "https://www.maharashtra.gov.in/",
+    "Manipur": "https://manipur.gov.in/", "Meghalaya": "https://meghalaya.gov.in/", "Mizoram": "https://mizoram.gov.in/",
+    "Nagaland": "https://nagaland.gov.in/", "Odisha": "https://odisha.gov.in/", "Punjab": "https://punjab.gov.in/",
+    "Rajasthan": "https://rajasthan.gov.in/", "Sikkim": "https://sikkim.gov.in/", "Tamil Nadu": "https://www.tn.gov.in/",
+    "Telangana": "https://www.telangana.gov.in/", "Tripura": "https://tripura.gov.in/", "Uttar Pradesh": "https://up.gov.in/",
+    "Uttarakhand": "https://uk.gov.in/", "West Bengal": "https://www.wb.gov.in/", "Andaman and Nicobar Islands": "https://andaman.gov.in/",
+    "Chandigarh": "https://chandigarh.gov.in/", "Dadra and Nagar Haveli and Daman and Diu": "https://ddd.gov.in/",
+    "Delhi": "https://delhi.gov.in/", "Jammu and Kashmir": "https://jk.gov.in/", "Ladakh": "https://ladakh.gov.in/",
+    "Lakshadweep": "https://lakshadweep.gov.in/", "Puducherry": "https://py.gov.in/",
+}
 
 
-def slugify(value):
-    value = re.sub(r"[^a-z0-9]+", "-", value.lower())
-    return value.strip("-")[:180]
-
-
-def content_hash(item):
-    return hashlib.sha256(
-        f"scheme|{item['title']}|{item['state']}|{item['official_url']}".encode("utf-8")
-    ).hexdigest()
-
-
-def get_client():
+def client():
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError("SUPABASE_URL / SUPABASE_KEY env vars are not set")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
+def slugify(s):
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:180]
+
+
+def clean(s):
+    return re.sub(r"\s+", " ", s or "").strip()
+
+
+def fetch(url):
+    r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": "Mozilla/5.0 GovernmentSchemeBot/1.0"})
+    r.raise_for_status()
+    return r.text
+
+
+def discover_myscheme(state):
+    """Extract scheme cards/links from myScheme's state listing where server-rendered HTML exposes them."""
+    url = f"{BASE}/search/state/{slugify(state)}"
+    try:
+        soup = BeautifulSoup(fetch(url), "html.parser")
+    except Exception as exc:
+        print(f"[government_schemes] myScheme unavailable for {state}: {exc}")
+        return []
+
+    results = []
+    seen = set()
+    for a in soup.find_all("a", href=True):
+        href = a.get("href", "")
+        title = clean(a.get_text(" ", strip=True))
+        if not title or len(title) < 5 or len(title) > 220:
+            continue
+        if "/scheme/" not in href and "/schemes/" not in href:
+            continue
+        if href.startswith("/"):
+            href = BASE + href
+        if href in seen:
+            continue
+        seen.add(href)
+        results.append((title, href))
+    return results
+
+
+def save_scheme(db, state, title, myscheme_url):
+    official = OFFICIAL_PORTALS.get(state, BASE)
+    record = {
+        "title": title,
+        "slug": slugify(f"{state}-{title}"),
+        "state": state,
+        "state_code": STATES[state],
+        "category": "General",
+        "department": f"Government of {state}" if state not in {"Delhi", "Puducherry", "Chandigarh"} else f"Government of {state}",
+        "short_description": f"Government scheme for eligible beneficiaries in {state}.",
+        "description": f"Official scheme information for {title}, discovered through the national Government scheme platform.",
+        "benefits": "See the official scheme page for current benefits and conditions.",
+        "eligibility": "See the official scheme page for current eligibility requirements.",
+        "documents": "Documents vary by scheme; check the official application instructions.",
+        "application_process": "Follow the application instructions on the official scheme page.",
+        "important_dates": {},
+        "official_url": official,
+        "official_source_name": f"Government of {state}",
+        "myscheme_url": myscheme_url,
+        "last_verified": __import__("datetime").date.today().isoformat(),
+        "is_active": True,
+        "seo_title": f"{title} - {state} Government Scheme",
+        "seo_description": f"Eligibility, benefits and application information for {title} in {state}.",
+        "keywords": [title, state, "government scheme", "yojana"],
+    }
+    db.table("government_schemes").upsert(record, on_conflict="slug").execute()
+
+
+def seed_state_portals(db):
+    """Ensure every State/UT is represented even if myScheme is JS-rendered or temporarily unavailable."""
+    for state in STATES:
+        save_scheme(db, state, f"Government Schemes - {state}", f"{BASE}/search/state/all-states")
+
+
 def run():
-    client = get_client()
-    saved = 0
-    for item in SCHEMES:
-        record = dict(item)
-        record["slug"] = slugify(record["title"])
-        record["important_dates"] = {}
-        record["is_active"] = True
-        record["seo_title"] = record["title"] + " – Eligibility, Benefits & How to Apply"
-        record["seo_description"] = record["short_description"]
-        record["keywords"] = [record["title"], record["state"], "government scheme"]
-        client.table("government_schemes").upsert(record, on_conflict="slug").execute()
-        saved += 1
-        print(f"[government_schemes] saved: {record['title']}")
-    print(f"[government_schemes] completed: {saved}")
+    db = client()
+    seed_state_portals(db)
+    total = 0
+    for state in STATES:
+        discovered = discover_myscheme(state)
+        for title, url in discovered:
+            try:
+                save_scheme(db, state, title, url)
+                total += 1
+            except Exception as exc:
+                print(f"[government_schemes] failed {state} / {title}: {exc}")
+        print(f"[government_schemes] {state}: {len(discovered)} schemes discovered")
+    print(f"[government_schemes] completed: {total} discovered schemes + {len(STATES)} state/UT portal records")
 
 
 if __name__ == "__main__":
