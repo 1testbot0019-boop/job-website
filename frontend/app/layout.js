@@ -8,18 +8,12 @@ const body = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500"], variabl
 const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-mono" });
 
 export const metadata = {
-  title: "Uttarakhand Rojgar | Govt Jobs, Results & Admit Cards",
-  description: "Latest Uttarakhand government jobs, results, admit cards, answer keys and notifications.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "https://job-website-vvuu.onrender.com"),
+  title: { default: "Govt. Jobs India | Government Jobs, Results, Schemes & Admit Cards", template: "%s | Govt. Jobs India" },
+  description: "Government jobs, results, admit cards, notifications and state-wise government schemes with detailed eligibility, benefits and official links.",
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }) {
-  return (
-    <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
-      <body className="min-h-screen flex flex-col">
-        <Header />
-        <main className="flex-1 site-shell">{children}</main>
-        <Footer />
-      </body>
-    </html>
-  );
+  return <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}><body className="min-h-screen flex flex-col"><Header /><main className="flex-1 site-shell">{children}</main><Footer /></body></html>;
 }
