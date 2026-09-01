@@ -3,7 +3,7 @@ name: Government Schemes - All States & UTs
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "40 2 * * 1,4"
+    - cron: "40 2 * * *"
 
 concurrency:
   group: government-schemes-crawler
