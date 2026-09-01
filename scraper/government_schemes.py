@@ -1,8 +1,8 @@
-"""Collect government schemes for all Indian States/UTs.
+"""National discovery fallback for government schemes.
 
-Primary source: myScheme, the national government scheme discovery platform,
-which covers Central, State and Union Territory schemes. Official source URLs
-are retained where available; myScheme is used as the discovery fallback.
+myScheme is an official Government of India discovery platform covering Central,
+State and UT schemes. This module is a fallback for discovery; the official-domain
+crawler is preferred because it can retain direct department URLs.
 """
 
 import re
@@ -27,24 +27,6 @@ STATES = {
     "Puducherry": "PY",
 }
 
-# Official state/UT government landing pages used as a fallback official destination.
-# Scheme-specific official links discovered from source pages are preferred.
-OFFICIAL_PORTALS = {
-    "Andhra Pradesh": "https://www.ap.gov.in/", "Arunachal Pradesh": "https://arunachalpradesh.gov.in/",
-    "Assam": "https://assam.gov.in/", "Bihar": "https://state.bihar.gov.in/", "Chhattisgarh": "https://cgstate.gov.in/",
-    "Goa": "https://www.goa.gov.in/", "Gujarat": "https://gujaratindia.gov.in/", "Haryana": "https://haryana.gov.in/",
-    "Himachal Pradesh": "https://himachal.gov.in/", "Jharkhand": "https://www.jharkhand.gov.in/", "Karnataka": "https://www.karnataka.gov.in/",
-    "Kerala": "https://kerala.gov.in/", "Madhya Pradesh": "https://mp.gov.in/", "Maharashtra": "https://www.maharashtra.gov.in/",
-    "Manipur": "https://manipur.gov.in/", "Meghalaya": "https://meghalaya.gov.in/", "Mizoram": "https://mizoram.gov.in/",
-    "Nagaland": "https://nagaland.gov.in/", "Odisha": "https://odisha.gov.in/", "Punjab": "https://punjab.gov.in/",
-    "Rajasthan": "https://rajasthan.gov.in/", "Sikkim": "https://sikkim.gov.in/", "Tamil Nadu": "https://www.tn.gov.in/",
-    "Telangana": "https://www.telangana.gov.in/", "Tripura": "https://tripura.gov.in/", "Uttar Pradesh": "https://up.gov.in/",
-    "Uttarakhand": "https://uk.gov.in/", "West Bengal": "https://www.wb.gov.in/", "Andaman and Nicobar Islands": "https://andaman.gov.in/",
-    "Chandigarh": "https://chandigarh.gov.in/", "Dadra and Nagar Haveli and Daman and Diu": "https://ddd.gov.in/",
-    "Delhi": "https://delhi.gov.in/", "Jammu and Kashmir": "https://jk.gov.in/", "Ladakh": "https://ladakh.gov.in/",
-    "Lakshadweep": "https://lakshadweep.gov.in/", "Puducherry": "https://py.gov.in/",
-}
-
 
 def client():
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -61,13 +43,13 @@ def clean(s):
 
 
 def fetch(url):
-    r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": "Mozilla/5.0 GovernmentSchemeBot/1.0"})
+    r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": "Mozilla/5.0 GovernmentSchemeBot/2.0"})
     r.raise_for_status()
     return r.text
 
 
 def discover_myscheme(state):
-    """Extract scheme cards/links from myScheme's state listing where server-rendered HTML exposes them."""
+    """Extract server-rendered myScheme detail links when available."""
     url = f"{BASE}/search/state/{slugify(state)}"
     try:
         soup = BeautifulSoup(fetch(url), "html.parser")
@@ -93,43 +75,59 @@ def discover_myscheme(state):
     return results
 
 
+def category_for(title):
+    hay = title.lower()
+    groups = {
+        "Solar & Renewable Energy": ("solar", "renewable", "surya", "saur"),
+        "Horticulture": ("horticulture", "orchard", "mushroom", "beekeeping", "fruit", "vegetable"),
+        "Animal Husbandry & Dairy": ("dairy", "livestock", "animal husbandry", "poultry", "goat", "sheep"),
+        "Fisheries": ("fisheries", "fishery", "aquaculture", "fish farming"),
+        "Agriculture & Farming": ("agriculture", "farmer", "kisan", "crop", "farming", "irrigation", "kisan"),
+        "MSME & Entrepreneurship": ("msme", "startup", "entrepreneur", "enterprise", "business", "employment"),
+        "Education": ("education", "student", "scholarship", "school", "college", "skill"),
+        "Health": ("health", "medical", "hospital", "ayush"),
+        "Women & Child": ("women", "girl", "child", "anganwadi", "maternal"),
+        "Housing": ("housing", "awas", "home", "shelter"),
+        "Social Security": ("pension", "widow", "disability", "senior citizen"),
+    }
+    for category, words in groups.items():
+        if any(word in hay for word in words):
+            return category
+    return "General"
+
+
 def save_scheme(db, state, title, myscheme_url):
-    official = OFFICIAL_PORTALS.get(state, BASE)
+    # Do not invent an official department URL. myScheme is itself an official
+    # Government of India scheme platform, so it is used as the verified fallback.
+    category = category_for(title)
     record = {
         "title": title,
         "slug": slugify(f"{state}-{title}"),
         "state": state,
         "state_code": STATES[state],
-        "category": "General",
-        "department": f"Government of {state}" if state not in {"Delhi", "Puducherry", "Chandigarh"} else f"Government of {state}",
+        "category": category,
+        "department": f"Government of {state}",
         "short_description": f"Government scheme for eligible beneficiaries in {state}.",
-        "description": f"Official scheme information for {title}, discovered through the national Government scheme platform.",
-        "benefits": "See the official scheme page for current benefits and conditions.",
-        "eligibility": "See the official scheme page for current eligibility requirements.",
-        "documents": "Documents vary by scheme; check the official application instructions.",
+        "description": f"Scheme information for {title}, discovered through the Government of India myScheme platform.",
+        "benefits": "See the official myScheme page for current benefits and conditions.",
+        "eligibility": "See the official myScheme page for current eligibility requirements.",
+        "documents": "Documents vary by scheme; check the official scheme page.",
         "application_process": "Follow the application instructions on the official scheme page.",
         "important_dates": {},
-        "official_url": official,
-        "official_source_name": f"Government of {state}",
+        "official_url": myscheme_url,
+        "official_source_name": "Government of India myScheme",
         "myscheme_url": myscheme_url,
         "last_verified": __import__("datetime").date.today().isoformat(),
         "is_active": True,
         "seo_title": f"{title} - {state} Government Scheme",
         "seo_description": f"Eligibility, benefits and application information for {title} in {state}.",
-        "keywords": [title, state, "government scheme", "yojana"],
+        "keywords": [title, state, category, "government scheme", "yojana"],
     }
     db.table("government_schemes").upsert(record, on_conflict="slug").execute()
 
 
-def seed_state_portals(db):
-    """Ensure every State/UT is represented even if myScheme is JS-rendered or temporarily unavailable."""
-    for state in STATES:
-        save_scheme(db, state, f"Government Schemes - {state}", f"{BASE}/search/state/all-states")
-
-
 def run():
     db = client()
-    seed_state_portals(db)
     total = 0
     for state in STATES:
         discovered = discover_myscheme(state)
@@ -140,7 +138,7 @@ def run():
             except Exception as exc:
                 print(f"[government_schemes] failed {state} / {title}: {exc}")
         print(f"[government_schemes] {state}: {len(discovered)} schemes discovered")
-    print(f"[government_schemes] completed: {total} discovered schemes + {len(STATES)} state/UT portal records")
+    print(f"[government_schemes] completed: {total} discovered schemes")
 
 
 if __name__ == "__main__":
