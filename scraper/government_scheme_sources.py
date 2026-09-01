@@ -1,7 +1,7 @@
 """Official government scheme source catalogue.
 
-The collector uses these sources as discovery pages. It never invents scheme URLs:
-only links returned from an official source are stored as official_url.
+The collector uses these sources as discovery pages. Scheme records are only
+created from links hosted on an official government domain/subdomain.
 """
 
 STATES_AND_UTS = {
@@ -17,12 +17,11 @@ STATES_AND_UTS = {
     "Puducherry": "PY",
 }
 
-# Stable official discovery portals. These are intentionally separate from scheme records.
-# If a portal changes, only this catalogue needs updating.
 OFFICIAL_SOURCES = [
-    {"state": "All India", "state_code": "IN", "name": "myScheme", "url": "https://www.myscheme.gov.in/"},
     {"state": "All India", "state_code": "IN", "name": "India.gov.in Schemes", "url": "https://www.india.gov.in/my-government/schemes"},
-    {"state": "Andhra Pradesh", "state_code": "AP", "name": "AP Government", "url": "https://www.ap.gov.in/"},
+    {"state": "All India", "state_code": "IN", "name": "myScheme", "url": "https://www.myscheme.gov.in/"},
+    {"state": "All India", "state_code": "IN", "name": "National Single Window System - Government Schemes", "url": "https://www.nsws.gov.in/government-schemes"},
+    {"state": "Andhra Pradesh", "state_code": "AP", "name": "Andhra Pradesh Government", "url": "https://www.ap.gov.in/"},
     {"state": "Arunachal Pradesh", "state_code": "AR", "name": "Arunachal Pradesh Government", "url": "https://arunachalpradesh.gov.in/"},
     {"state": "Assam", "state_code": "AS", "name": "Assam Government", "url": "https://assam.gov.in/"},
     {"state": "Bihar", "state_code": "BR", "name": "Bihar Government", "url": "https://state.bihar.gov.in/"},
@@ -49,6 +48,10 @@ OFFICIAL_SOURCES = [
     {"state": "Tripura", "state_code": "TR", "name": "Tripura Government", "url": "https://tripura.gov.in/"},
     {"state": "Uttar Pradesh", "state_code": "UP", "name": "Uttar Pradesh Government", "url": "https://up.gov.in/"},
     {"state": "Uttarakhand", "state_code": "UK", "name": "Uttarakhand Government", "url": "https://uk.gov.in/"},
+    # Uttarakhand departments with rich scheme catalogues.
+    {"state": "Uttarakhand", "state_code": "UK", "name": "Uttarakhand Agriculture Department", "url": "https://agriculture.uk.gov.in/schemes-programmes/"},
+    {"state": "Uttarakhand", "state_code": "UK", "name": "Uttarakhand Horticulture Department", "url": "https://shm.uk.gov.in/dbt-scheme/"},
+    {"state": "Uttarakhand", "state_code": "UK", "name": "Uttarakhand Renewable Energy Development Agency", "url": "https://ureda.uk.gov.in/solar-energy-schemes/"},
     {"state": "West Bengal", "state_code": "WB", "name": "West Bengal Government", "url": "https://wb.gov.in/"},
     {"state": "Andaman and Nicobar Islands", "state_code": "AN", "name": "Andaman and Nicobar Administration", "url": "https://andaman.gov.in/"},
     {"state": "Chandigarh", "state_code": "CH", "name": "Chandigarh Administration", "url": "https://chandigarh.gov.in/"},
