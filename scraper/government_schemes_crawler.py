@@ -1,9 +1,9 @@
 """Discover government schemes from official Central, State and UT websites.
 
-The crawler is deliberately conservative: it only stores pages whose host is the
-configured official government host (or a subdomain of it). It follows links whose
-text/URL looks scheme-related and keeps the final official page as official_url.
-It does not fabricate URLs or use third-party scheme directories as sources.
+The crawler is intentionally conservative: scheme records are created only from
+pages hosted on the configured official government domain. It now also discovers
+department pages for agriculture, farming, horticulture, solar/renewable energy,
+animal husbandry, dairy, fisheries, rural development, MSME and allied sectors.
 """
 
 from __future__ import annotations
@@ -22,11 +22,11 @@ from government_scheme_sources import OFFICIAL_SOURCES
 from supabase import create_client
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; IndiaGovSchemeBot/1.0; +https://github.com/1testbot0019-boop/job-website)"
+    "User-Agent": "Mozilla/5.0 (compatible; IndiaGovSchemeBot/2.0; +https://github.com/1testbot0019-boop/job-website)"
 }
-TIMEOUT = 18
-MAX_PAGES_PER_SOURCE = 35
-MAX_DEPTH = 2
+TIMEOUT = 20
+MAX_PAGES_PER_SOURCE = 150
+MAX_DEPTH = 3
 
 SCHEME_WORDS = (
     "scheme", "schemes", "yojana", "yojanas", "programme", "program",
@@ -35,13 +35,32 @@ SCHEME_WORDS = (
     "छात्रवृत्ति", "सब्सिडी", "कल्याण"
 )
 
+# Department/topic discovery words. These make the crawler reach department
+# pages even when the state portal does not call them a "scheme" page.
+TOPIC_WORDS = (
+    "agriculture", "agri", "farmer", "farmers", "farming", "kisan", "crop",
+    "horticulture", "fruit", "vegetable", "organic farming", "natural farming",
+    "solar", "renewable energy", "energy", "saur", "surya",
+    "animal husbandry", "livestock", "dairy", "milk", "fisheries", "fishery",
+    "rural development", "rural livelihood", "cooperative", "co-operation",
+    "msme", "micro small", "industries", "self employment", "startup",
+    "women", "child", "education", "health", "housing", "skill development",
+    "irrigation", "water conservation", "forest", "handloom", "handicraft",
+    "tribal", "social welfare", "minority", "pension"
+)
+
 CATEGORY_WORDS = {
-    "Agriculture": ("agri", "farmer", "kisan", "crop", "horticulture", "fisher", "dairy"),
+    "Agriculture & Farming": ("agriculture", "agri", "farmer", "farmers", "farming", "kisan", "crop", "cultivation", "seed", "soil", "irrigation", "farm"),
+    "Horticulture": ("horticulture", "orchard", "fruit", "vegetable", "mushroom", "floriculture", "beekeeping", "nursery", "polyhouse", "greenhouse"),
+    "Solar & Renewable Energy": ("solar", "renewable energy", "photovoltaic", "solar pv", "saur", "surya", "rooftop solar", "solar pump"),
+    "Animal Husbandry & Dairy": ("animal husbandry", "livestock", "dairy", "milk", "cattle", "goat", "sheep", "poultry", "pig", "fodder"),
+    "Fisheries": ("fisheries", "fishery", "fish farming", "aquaculture", "fisherman"),
+    "Rural Development": ("rural development", "rural livelihood", "village", "panchayat", "self help group", "shg"),
+    "MSME & Entrepreneurship": ("msme", "micro small", "industry", "industries", "startup", "entrepreneur", "self employment", "business"),
     "Education": ("education", "student", "school", "college", "scholarship", "skill"),
     "Health": ("health", "medical", "hospital", "ayush", "medicine"),
-    "Women and Child": ("women", "woman", "girl", "child", "anganwadi", "maternal"),
+    "Women & Child": ("women", "woman", "girl", "child", "anganwadi", "maternal"),
     "Housing": ("housing", "awas", "home", "shelter"),
-    "Employment and Entrepreneurship": ("employment", "job", "self employment", "startup", "entrepreneur", "msme"),
     "Social Security": ("pension", "widow", "disability", "senior citizen", "social security"),
 }
 
@@ -61,15 +80,29 @@ def normalize_url(url: str) -> str:
     return p._replace(fragment="").geturl().rstrip("/") + "/"
 
 
+def matches_words(text: str, words: tuple[str, ...]) -> bool:
+    hay = (text or "").lower()
+    return any(word in hay for word in words)
+
+
 def looks_like_scheme_link(text: str, url: str) -> bool:
-    hay = f"{text} {url}".lower()
-    return any(word in hay for word in SCHEME_WORDS)
+    return matches_words(f"{text} {url}", SCHEME_WORDS)
+
+
+def looks_like_topic_link(text: str, url: str) -> bool:
+    return matches_words(f"{text} {url}", TOPIC_WORDS)
 
 
 def category_for(text: str) -> str:
-    hay = text.lower()
-    for category, words in CATEGORY_WORDS.items():
-        if any(w in hay for w in words):
+    hay = (text or "").lower()
+    # More specific sectors first so horticulture/solar do not become generic agriculture.
+    for category in (
+        "Solar & Renewable Energy", "Horticulture", "Animal Husbandry & Dairy",
+        "Fisheries", "Agriculture & Farming", "Rural Development",
+        "MSME & Entrepreneurship", "Education", "Health", "Women & Child",
+        "Housing", "Social Security",
+    ):
+        if any(w in hay for w in CATEGORY_WORDS[category]):
             return category
     return "General"
 
@@ -85,13 +118,18 @@ def extract_record(source: dict, url: str, html: str):
     if not name or len(name) < 5:
         return None
 
-    text = clean(soup.get_text(" "), 18000)
-    if not looks_like_scheme_link(name, url) and not looks_like_scheme_link(text[:5000], url):
+    text = clean(soup.get_text(" "), 22000)
+    # A page is a candidate when its title/URL or body contains scheme/topic language.
+    if not (looks_like_scheme_link(name, url) or looks_like_topic_link(name, url) or looks_like_scheme_link(text[:8000], url)):
         return None
 
-    # Avoid saving generic home/search/contact pages as schemes.
     generic = ("home", "welcome", "contact us", "about us", "search", "login", "sitemap")
     if name.lower().strip() in generic:
+        return None
+
+    # Do not turn a broad department landing page into a scheme unless it has
+    # actual programme/benefit language or a meaningful scheme-like title.
+    if not looks_like_scheme_link(name, url) and not looks_like_scheme_link(text[:12000], url):
         return None
 
     description = ""
@@ -100,7 +138,7 @@ def extract_record(source: dict, url: str, html: str):
         description = clean(meta.get("content"))
     if not description:
         paragraphs = [clean(p.get_text(" ")) for p in soup.find_all("p")]
-        description = next((p for p in paragraphs if len(p) >= 80), clean(text[:600]))
+        description = next((p for p in paragraphs if len(p) >= 80), clean(text[:800]))
 
     slug_base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:160]
     if not slug_base:
@@ -128,7 +166,7 @@ def extract_record(source: dict, url: str, html: str):
         "is_active": True,
         "seo_title": f"{name} - Eligibility, Benefits & How to Apply",
         "seo_description": description[:300],
-        "keywords": [name, source["state"], "government scheme"],
+        "keywords": [name, source["state"], category_for(text), "government scheme"],
         "content_hash": digest,
     }
 
@@ -164,13 +202,13 @@ def crawl_source(source: dict):
             for a in soup.find_all("a", href=True):
                 href = urljoin(final_url, a.get("href"))
                 text = clean(a.get_text(" "))
-                if not href.startswith(("http://", "https://")):
+                if not href.startswith(("http://", "https://")) or not same_official_host(href, root):
                     continue
-                if not same_official_host(href, root):
-                    continue
-                if looks_like_scheme_link(text, href):
+                # Follow scheme links and relevant department/topic links. This is
+                # the key expansion over the previous crawler.
+                if looks_like_scheme_link(text, href) or looks_like_topic_link(text, href):
                     queue.append((normalize_url(href), depth + 1))
-            time.sleep(0.15)
+            time.sleep(0.10)
         except requests.RequestException as exc:
             print(f"[scheme] {source['state']}: {url} -> {exc}")
     return records
@@ -180,13 +218,12 @@ def save_records(records):
     client = create_client(SUPABASE_URL, SUPABASE_KEY)
     saved = 0
     for record in records:
-        # Remove helper field not present in the DB schema.
         record.pop("content_hash", None)
         try:
             client.table("government_schemes").upsert(record, on_conflict="slug").execute()
             saved += 1
-            print(f"[scheme] saved {record['state']}: {record['title']}")
-        except Exception as exc:  # noqa: BLE001
+            print(f"[scheme] saved {record['state']} [{record['category']}]: {record['title']}")
+        except Exception as exc:
             print(f"[scheme] database error for {record['title']}: {exc}")
     return saved
 
