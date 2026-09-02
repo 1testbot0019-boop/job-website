@@ -2,7 +2,7 @@ name: Refresh Competitive Exam MCQs
 
 on:
   schedule:
-    - cron: '30 2 * * 1,4'
+    - cron: '30 2 * * *'
   workflow_dispatch:
 
 jobs:
