@@ -18,25 +18,58 @@ export default function AdminPage() {
   const [query, setQuery] = useState("");
 
   async function load() {
-    setLoading(true); setError("");
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) { router.replace("/login"); return; }
+    setLoading(true);
+    setError("");
+
+    // Refresh once so a newly assigned server-side app_metadata role is present
+    // in the access token instead of relying on a stale browser session.
+    let session;
+    const refreshed = await supabase.auth.refreshSession();
+    session = refreshed.data?.session || null;
+    if (!session) {
+      const current = await supabase.auth.getSession();
+      session = current.data?.session || null;
+    }
+
+    if (!session) {
+      setLoading(false);
+      router.replace("/login?next=/admin");
+      return;
+    }
+
     setMe(session.user);
-    const response = await fetch("/api/admin/users", { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" });
+    const response = await fetch("/api/admin/users", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
     const result = await response.json().catch(() => ({}));
-    if (response.status === 401) { router.replace("/login"); return; }
-    if (!response.ok) { setError(result.error || "You are not authorized to access the admin dashboard."); setLoading(false); return; }
-    setUsers(result.users || []); setLoading(false);
+
+    if (response.status === 401) {
+      setLoading(false);
+      router.replace("/login?next=/admin");
+      return;
+    }
+    if (!response.ok) {
+      setError(result.error || "You are not authorized to access the admin dashboard.");
+      setLoading(false);
+      return;
+    }
+
+    setUsers(result.users || []);
+    setLoading(false);
   }
 
   useEffect(() => { load(); }, []);
 
-  const filtered = useMemo(() => users.filter((u) => `${u.email} ${u.name} ${u.provider}`.toLowerCase().includes(query.toLowerCase())), [users, query]);
+  const filtered = useMemo(
+    () => users.filter((u) => `${u.email} ${u.name} ${u.provider}`.toLowerCase().includes(query.toLowerCase())),
+    [users, query]
+  );
   const confirmed = users.filter((u) => u.email_confirmed_at).length;
   const recent = users.filter((u) => u.last_sign_in_at && Date.now() - new Date(u.last_sign_in_at).getTime() < 7 * 86400000).length;
 
   if (loading) return <main className="max-w-7xl mx-auto px-4 py-12"><div className="border border-stone bg-white p-8">Loading admin dashboard…</div></main>;
-  if (error) return <main className="max-w-7xl mx-auto px-4 py-12"><div className="border border-stone bg-white p-8"><h1 className="font-display text-3xl text-ridge">Admin access required</h1><p className="mt-3 text-ink/70">{error}</p><p className="mt-4 text-sm text-ink/60">Sign in using an email listed in the server-side ADMIN_EMAILS environment variable.</p></div></main>;
+  if (error) return <main className="max-w-7xl mx-auto px-4 py-12"><div className="border border-stone bg-white p-8"><h1 className="font-display text-3xl text-ridge">Admin access required</h1><p className="mt-3 text-ink/70">{error}</p><p className="mt-4 text-sm text-ink/60">Your Supabase account must have the server-side admin role or be listed in ADMIN_EMAILS.</p><button onClick={load} className="mt-5 border border-stone bg-white px-4 py-2">Retry</button></div></main>;
 
   return <main className="max-w-7xl mx-auto px-4 md:px-6 py-10">
     <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
